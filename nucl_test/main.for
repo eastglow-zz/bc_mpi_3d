@@ -1,6 +1,7 @@
       program bctest_par
       use input
       use boundary_conditions
+      use draw
       use outputs
       implicit none
       include 'mpif.h'
@@ -18,12 +19,12 @@
 
       NPX = 2
       NPY = 2
-      NPZ = 2
+      NPZ = 1
 
-      im = 4
-      jm = 4
-      km = 4
-      np = 2
+      im = 100
+      jm = 100
+      km = 2
+      np = 4
 
       numghost = 2
 
@@ -54,49 +55,21 @@
       do k=1,kml
       do j=1,jml
       do i=1,iml
-            call get_global_ijk(ig,jg,kg,i,j,k,myrank)
-            a(i,j,k,1)=(ig-1) + (jg-1)*(im) + (kg-1)*(im)*(jm)
-            a(i,j,k,2)=myrank 
-            b(i,j,k,1)=(ig-1) + (jg-1)*(im) + (kg-1)*(im)*(jm)
-            b(i,j,k,2)=myrank 
+            a(i,j,k,1)=myrank
       enddo
       enddo
       enddo
 
-      !call print_array_i4(a(:,:,:,1),numghost,ilb,iub,jlb,jub,klb,kub)
+      call put_sphere_i4(a(:,:,:,1),1,1,1, 20,10, numghost,'adiabatic'
+     &                           ,myrank)
 
-      !call boundary_condition_i4_par('periodic',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_x',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_y',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_z',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_xy',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_yz',a(:,:,:,1),numghost)
-      call boundary_condition_i4_par('adiabatic_zx',a(:,:,:,1),numghost)
+      call put_sphere_i4(a(:,:,:,1),40,30,1,25,10,numghost,'adiabatic'
+     &                           ,myrank)
 
-      do i=1,1000
-      if(myrank.eq.0)then
-            write(*,*)'# of calls: ',i
-      endif
-      call boundary_condition_i4_par('periodic',a(:,:,:,1),numghost)
-      call boundary_condition_i4_par('periodic',a(:,:,:,2),numghost)
-      enddo
-
-      !call print_array_i4(a(:,:,:,1),numghost,ilb,iub,jlb,jub,klb,kub)
 
       call output_i4_raw(a(:,:,:,1),numghost,'a1',0,myrank,'test data')
 
       call output_i4_pvtr(a(:,:,:,1),numghost,'a1',0,myrank 
-     &                     ,"test pvtr")
-
-  
-      call boundary_condition_r8_par('adiabatic_zx',b(:,:,:,1),numghost)
-
-      !call print_array_r8(b(:,:,:,1),numghost,ilb,iub,jlb,jub,klb,kub)
-
-      call output_r8_raw(b(:,:,:,1),numghost,'b1',0,myrank,'test data')
-
-      call output_r8_pvtr(b(:,:,:,1),numghost,'b1',0,myrank 
      &                     ,"test pvtr")
 
 

@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<VTKFile type="PRectilinearGrid" version="0.1" byte_order="LittleEndian">
+<PRectilinearGrid WholeExtent="0   63    0   63    0    1">
+<PCoordinates>
+<DataArray Name="x" type="Float32" format="ascii">
+</DataArray>
+<DataArray Name="y" type="Float32" format="ascii">
+</DataArray>
+<DataArray Name="z" type="Float32" format="ascii">
+</DataArray>
+</PCoordinates>
+<PPointData Scalars="b1">
+<DataArray type="Float32" Name="b1" format="ascii">
+</DataArray>
+</PPointData>
+<Piece Extent="0   31    0   31    0    1" Source="b1_00000000_0000.vtr">
+</Piece>
+<Piece Extent="31   63    0   31    0    1" Source="b1_00000000_0001.vtr">
+</Piece>
+<Piece Extent="0   31   31   63    0    1" Source="b1_00000000_0002.vtr">
+</Piece>
+<Piece Extent="31   63   31   63    0    1" Source="b1_00000000_0003.vtr">
+</Piece>
+</PRectilinearGrid>
+</VTKFile>
