@@ -2,6 +2,20 @@
       use input
       implicit none
 
+      integer(4) :: bc_call_count
+      integer(4) :: bc_max_mpi_tag = 0
+      integer(4),parameter :: bc_mpitag_jumpstep = 13
+      ! bc_call_count increases at every single call of either boundary_condition_i4_par() or boundary_condition_r8_par().
+      ! Purpose of this variable is not to overlap the ranges of MPI_TAG used during MPI_ISEND/IRECV from a calls of bc to another bc calls to prevent mix-up of the data buffer.
+      ! The allowed maximum value of MPI_TAG is (most conservatively) known as 32767, but possibly higher library by library or version by version.
+      ! Highly recommend reinitialize bc_call_count at every time step via the subroutine init_bc_call_count(val).
+      ! how bc_call_count work:
+      !  1. bc_call_count increases by 1 at every call of bc.
+      !  2. The base MPI_TAG value is computed by bc_call_count*bc_mpitag_jumpstep
+      !     where, bc_mpitag_jumpstep is a parameter limiting the maximum independent mpi_isend/irecv in a single bc call.
+      !     For now, minimum value of bc_mpitag_jumpstep is 13 (now, MPI_TAG of base+1~12 is used in a single bc call).
+      !  3. Lower bc_mpitag_jumpstep, higher bc_call_count possible.
+
       ! Layer indexing and naming: ij, jk, ki, 6 planes: il, iu, jl, ju, kl, ku
       !1: il plane: jk indexing near i=1-ng, stack of 2D planes with the thickness of the # of ghost layers
       !2: iu plane: jk indexing near i=im+ng, stack of 2D planes with the thickness of the # of ghost layers
@@ -64,6 +78,48 @@
 
 
       contains
+
+      subroutine init_bc_call_count(val)
+      implicit none
+      integer(4),intent(in) :: val
+
+       bc_call_count = val
+
+      end subroutine init_bc_call_count
+
+
+      subroutine verbose_bc_call_count()
+      implicit none
+      
+       write(*,*) 'bc_call_count:', bc_call_count
+
+      end subroutine verbose_bc_call_count
+
+
+      subroutine verbose_bc_max_mpi_tag()
+      implicit none
+
+      write(*,*) 'bc_max_mpi_tag:', bc_max_mpi_tag
+
+      end subroutine verbose_bc_max_mpi_tag
+
+
+      subroutine monitor_bc_max_mpi_tag()
+      implicit none
+      include 'mpif.h'
+      if(bc_max_mpi_tag.ge.32767)then
+            write(*,*)'Reminder: bc_max_mpi_tag exceeded 32767.',
+     &           bc_max_mpi_tag
+            if(bc_max_mpi_tag.ge.MPI_TAG_UB)then
+            write(*,*)'ERROR: bc_max_mpi_tag exceeded MPI_TAG_UB.',
+     &        bc_max_mpi_tag
+            write(*,*)'MPI_TAG_UB for this system:',MPI_TAG_UB
+            write(*,*)'Aborting due to high bc_max_mpi_tag.'
+            call abort
+            endif
+      endif
+      end subroutine monitor_bc_max_mpi_tag
+
 
       integer(4) function get_pid(pidx, pidy, pidz)
       use input
@@ -338,6 +394,12 @@
       integer(4) :: irecv09, irecv10, irecv11, irecv12
 
       integer(4) :: istatus(MPI_STATUS_SIZE), ierr
+      integer(4) :: basetag
+
+      ! Resister the call count to determine the base MPI_TAG value
+      bc_call_count = 1 + bc_call_count
+      basetag = bc_call_count*bc_mpitag_jumpstep
+      bc_max_mpi_tag = max(bc_max_mpi_tag,basetag+bc_mpitag_jumpstep)
 
       !Process coordinate
       call get_pidxyz(pidx, pidy, pidz, myrank)
@@ -384,17 +446,17 @@
       pidto05=get_pid(pidx,pidy,pidz-1) ! a_kl_s
       pidto06=get_pid(pidx,pidy,pidz+1) ! a_ku_s
       call MPI_ISEND(a_il_s(1-ng,1-ng,1),size(a_il_s),MPI_INTEGER,
-     & pidto01,5001,MPI_COMM_WORLD,isend01,ierr)
+     & pidto01,basetag+1,MPI_COMM_WORLD,isend01,ierr)
       call MPI_ISEND(a_iu_s(1-ng,1-ng,1),size(a_iu_s),MPI_INTEGER,
-     & pidto02,5002,MPI_COMM_WORLD,isend02,ierr)
+     & pidto02,basetag+2,MPI_COMM_WORLD,isend02,ierr)
       call MPI_ISEND(a_jl_s(1-ng,1-ng,1),size(a_jl_s),MPI_INTEGER,
-     & pidto03,5003,MPI_COMM_WORLD,isend03,ierr)
+     & pidto03,basetag+3,MPI_COMM_WORLD,isend03,ierr)
       call MPI_ISEND(a_ju_s(1-ng,1-ng,1),size(a_ju_s),MPI_INTEGER,
-     & pidto04,5004,MPI_COMM_WORLD,isend04,ierr)
+     & pidto04,basetag+4,MPI_COMM_WORLD,isend04,ierr)
       call MPI_ISEND(a_kl_s(1-ng,1-ng,1),size(a_kl_s),MPI_INTEGER,
-     & pidto05,5005,MPI_COMM_WORLD,isend05,ierr)
+     & pidto05,basetag+5,MPI_COMM_WORLD,isend05,ierr)
       call MPI_ISEND(a_ku_s(1-ng,1-ng,1),size(a_ku_s),MPI_INTEGER,
-     & pidto06,5006,MPI_COMM_WORLD,isend06,ierr)
+     & pidto06,basetag+6,MPI_COMM_WORLD,isend06,ierr)
 
       pidfrom01=get_pid(pidx-1,pidy,pidz) ! a_il_r
       pidfrom02=get_pid(pidx+1,pidy,pidz) ! a_iu_r
@@ -403,17 +465,17 @@
       pidfrom05=get_pid(pidx,pidy,pidz-1) ! a_kl_r
       pidfrom06=get_pid(pidx,pidy,pidz+1) ! a_ku_r
       call MPI_IRECV(a_il_r(1-ng,1-ng,1),size(a_il_r),MPI_INTEGER,
-     & pidfrom01,5002,MPI_COMM_WORLD,irecv01,ierr)
+     & pidfrom01,basetag+2,MPI_COMM_WORLD,irecv01,ierr)
       call MPI_IRECV(a_iu_r(1-ng,1-ng,1),size(a_iu_r),MPI_INTEGER,
-     & pidfrom02,5001,MPI_COMM_WORLD,irecv02,ierr)
+     & pidfrom02,basetag+1,MPI_COMM_WORLD,irecv02,ierr)
       call MPI_IRECV(a_jl_r(1-ng,1-ng,1),size(a_jl_r),MPI_INTEGER,
-     & pidfrom03,5004,MPI_COMM_WORLD,irecv03,ierr)
+     & pidfrom03,basetag+4,MPI_COMM_WORLD,irecv03,ierr)
       call MPI_IRECV(a_ju_r(1-ng,1-ng,1),size(a_ju_r),MPI_INTEGER,
-     & pidfrom04,5003,MPI_COMM_WORLD,irecv04,ierr)
+     & pidfrom04,basetag+3,MPI_COMM_WORLD,irecv04,ierr)
       call MPI_IRECV(a_kl_r(1-ng,1-ng,1),size(a_kl_r),MPI_INTEGER,
-     & pidfrom05,5006,MPI_COMM_WORLD,irecv05,ierr)
+     & pidfrom05,basetag+6,MPI_COMM_WORLD,irecv05,ierr)
       call MPI_IRECV(a_ku_r(1-ng,1-ng,1),size(a_ku_r),MPI_INTEGER,
-     & pidfrom06,5005,MPI_COMM_WORLD,irecv06,ierr)
+     & pidfrom06,basetag+5,MPI_COMM_WORLD,irecv06,ierr)
 
       call MPI_WAIT(isend01,istatus,ierr)
       call MPI_WAIT(isend02,istatus,ierr)
@@ -443,29 +505,29 @@
       pidto11=get_pid(pidx-1,pidy,pidz+1) ! a_kuil_s
       pidto12=get_pid(pidx+1,pidy,pidz+1) ! a_kuiu_s
       call MPI_ISEND(a_iljl_s(1-ng,1,1),size(a_iljl_s),MPI_INTEGER,
-     & pidto01,5001,MPI_COMM_WORLD,isend01,ierr)
+     & pidto01,basetag+1,MPI_COMM_WORLD,isend01,ierr)
       call MPI_ISEND(a_ilju_s(1-ng,1,1),size(a_ilju_s),MPI_INTEGER,
-     & pidto02,5002,MPI_COMM_WORLD,isend02,ierr)
+     & pidto02,basetag+2,MPI_COMM_WORLD,isend02,ierr)
       call MPI_ISEND(a_iujl_s(1-ng,1,1),size(a_iujl_s),MPI_INTEGER,
-     & pidto03,5003,MPI_COMM_WORLD,isend03,ierr)
+     & pidto03,basetag+3,MPI_COMM_WORLD,isend03,ierr)
       call MPI_ISEND(a_iuju_s(1-ng,1,1),size(a_iuju_s),MPI_INTEGER,
-     & pidto04,5004,MPI_COMM_WORLD,isend04,ierr)
+     & pidto04,basetag+4,MPI_COMM_WORLD,isend04,ierr)
       call MPI_ISEND(a_jlkl_s(1-ng,1,1),size(a_jlkl_s),MPI_INTEGER,
-     & pidto05,5005,MPI_COMM_WORLD,isend05,ierr)
+     & pidto05,basetag+5,MPI_COMM_WORLD,isend05,ierr)
       call MPI_ISEND(a_jlku_s(1-ng,1,1),size(a_jlku_s),MPI_INTEGER,
-     & pidto06,5006,MPI_COMM_WORLD,isend06,ierr)
+     & pidto06,basetag+6,MPI_COMM_WORLD,isend06,ierr)
       call MPI_ISEND(a_jukl_s(1-ng,1,1),size(a_jukl_s),MPI_INTEGER,
-     & pidto07,5007,MPI_COMM_WORLD,isend07,ierr)
+     & pidto07,basetag+7,MPI_COMM_WORLD,isend07,ierr)
       call MPI_ISEND(a_juku_s(1-ng,1,1),size(a_juku_s),MPI_INTEGER,
-     & pidto08,5008,MPI_COMM_WORLD,isend08,ierr)
+     & pidto08,basetag+8,MPI_COMM_WORLD,isend08,ierr)
       call MPI_ISEND(a_klil_s(1-ng,1,1),size(a_klil_s),MPI_INTEGER,
-     & pidto09,5009,MPI_COMM_WORLD,isend09,ierr)
+     & pidto09,basetag+9,MPI_COMM_WORLD,isend09,ierr)
       call MPI_ISEND(a_kliu_s(1-ng,1,1),size(a_kliu_s),MPI_INTEGER,
-     & pidto10,5010,MPI_COMM_WORLD,isend10,ierr)
+     & pidto10,basetag+10,MPI_COMM_WORLD,isend10,ierr)
       call MPI_ISEND(a_kuil_s(1-ng,1,1),size(a_kuil_s),MPI_INTEGER,
-     & pidto11,5011,MPI_COMM_WORLD,isend11,ierr)
+     & pidto11,basetag+11,MPI_COMM_WORLD,isend11,ierr)
       call MPI_ISEND(a_kuiu_s(1-ng,1,1),size(a_kuiu_s),MPI_INTEGER,
-     & pidto12,5012,MPI_COMM_WORLD,isend12,ierr)
+     & pidto12,basetag+12,MPI_COMM_WORLD,isend12,ierr)
 
       pidfrom01=get_pid(pidx-1,pidy-1,pidz) ! a_iljl_r
       pidfrom02=get_pid(pidx-1,pidy+1,pidz) ! a_ilju_r
@@ -480,29 +542,29 @@
       pidfrom11=get_pid(pidx-1,pidy,pidz+1) ! a_kuil_r
       pidfrom12=get_pid(pidx+1,pidy,pidz+1) ! a_kuiu_r
       call MPI_IRECV(a_iljl_r(1-ng,1,1),size(a_iljl_r),MPI_INTEGER,
-     & pidfrom01,5004,MPI_COMM_WORLD,irecv01,ierr)
+     & pidfrom01,basetag+4,MPI_COMM_WORLD,irecv01,ierr)
       call MPI_IRECV(a_ilju_r(1-ng,1,1),size(a_ilju_r),MPI_INTEGER,
-     & pidfrom02,5003,MPI_COMM_WORLD,irecv02,ierr)
+     & pidfrom02,basetag+3,MPI_COMM_WORLD,irecv02,ierr)
       call MPI_IRECV(a_iujl_r(1-ng,1,1),size(a_iujl_r),MPI_INTEGER,
-     & pidfrom03,5002,MPI_COMM_WORLD,irecv03,ierr)
+     & pidfrom03,basetag+2,MPI_COMM_WORLD,irecv03,ierr)
       call MPI_IRECV(a_iuju_r(1-ng,1,1),size(a_iuju_r),MPI_INTEGER,
-     & pidfrom04,5001,MPI_COMM_WORLD,irecv04,ierr)
+     & pidfrom04,basetag+1,MPI_COMM_WORLD,irecv04,ierr)
       call MPI_IRECV(a_jlkl_r(1-ng,1,1),size(a_jlkl_r),MPI_INTEGER,
-     & pidfrom05,5008,MPI_COMM_WORLD,irecv05,ierr)
+     & pidfrom05,basetag+8,MPI_COMM_WORLD,irecv05,ierr)
       call MPI_IRECV(a_jlku_r(1-ng,1,1),size(a_jlku_r),MPI_INTEGER,
-     & pidfrom06,5007,MPI_COMM_WORLD,irecv06,ierr)
+     & pidfrom06,basetag+7,MPI_COMM_WORLD,irecv06,ierr)
       call MPI_IRECV(a_jukl_r(1-ng,1,1),size(a_jukl_r),MPI_INTEGER,
-     & pidfrom07,5006,MPI_COMM_WORLD,irecv07,ierr)
+     & pidfrom07,basetag+6,MPI_COMM_WORLD,irecv07,ierr)
       call MPI_IRECV(a_juku_r(1-ng,1,1),size(a_juku_r),MPI_INTEGER,
-     & pidfrom08,5005,MPI_COMM_WORLD,irecv08,ierr)
+     & pidfrom08,basetag+5,MPI_COMM_WORLD,irecv08,ierr)
       call MPI_IRECV(a_klil_r(1-ng,1,1),size(a_klil_r),MPI_INTEGER,
-     & pidfrom09,5012,MPI_COMM_WORLD,irecv09,ierr)
+     & pidfrom09,basetag+12,MPI_COMM_WORLD,irecv09,ierr)
       call MPI_IRECV(a_kliu_r(1-ng,1,1),size(a_kliu_r),MPI_INTEGER,
-     & pidfrom10,5011,MPI_COMM_WORLD,irecv10,ierr)
+     & pidfrom10,basetag+11,MPI_COMM_WORLD,irecv10,ierr)
       call MPI_IRECV(a_kuil_r(1-ng,1,1),size(a_kuil_r),MPI_INTEGER,
-     & pidfrom11,5010,MPI_COMM_WORLD,irecv11,ierr)
+     & pidfrom11,basetag+10,MPI_COMM_WORLD,irecv11,ierr)
       call MPI_IRECV(a_kuiu_r(1-ng,1,1),size(a_kuiu_r),MPI_INTEGER,
-     & pidfrom12,5009,MPI_COMM_WORLD,irecv12,ierr)
+     & pidfrom12,basetag+9,MPI_COMM_WORLD,irecv12,ierr)
 
 
       call MPI_WAIT(isend01,istatus,ierr)
@@ -541,21 +603,21 @@
       pidto07=get_pid(pidx-1,pidy+1,pidz+1) !a_luu_s 
       pidto08=get_pid(pidx+1,pidy+1,pidz+1) !a_uuu_s 
       call MPI_ISEND(a_lll_s(1,1,1),size(a_lll_s),MPI_INTEGER,
-     & pidto01,5001,MPI_COMM_WORLD,isend01,ierr)
+     & pidto01,basetag+1,MPI_COMM_WORLD,isend01,ierr)
       call MPI_ISEND(a_ull_s(1,1,1),size(a_ull_s),MPI_INTEGER,
-     & pidto02,5002,MPI_COMM_WORLD,isend02,ierr)
+     & pidto02,basetag+2,MPI_COMM_WORLD,isend02,ierr)
       call MPI_ISEND(a_lul_s(1,1,1),size(a_lul_s),MPI_INTEGER,
-     & pidto03,5003,MPI_COMM_WORLD,isend03,ierr)
+     & pidto03,basetag+3,MPI_COMM_WORLD,isend03,ierr)
       call MPI_ISEND(a_uul_s(1,1,1),size(a_uul_s),MPI_INTEGER,
-     & pidto04,5004,MPI_COMM_WORLD,isend04,ierr)
+     & pidto04,basetag+4,MPI_COMM_WORLD,isend04,ierr)
       call MPI_ISEND(a_llu_s(1,1,1),size(a_llu_s),MPI_INTEGER,
-     & pidto05,5005,MPI_COMM_WORLD,isend05,ierr)
+     & pidto05,basetag+5,MPI_COMM_WORLD,isend05,ierr)
       call MPI_ISEND(a_ulu_s(1,1,1),size(a_ulu_s),MPI_INTEGER,
-     & pidto06,5006,MPI_COMM_WORLD,isend06,ierr)
+     & pidto06,basetag+6,MPI_COMM_WORLD,isend06,ierr)
       call MPI_ISEND(a_luu_s(1,1,1),size(a_luu_s),MPI_INTEGER,
-     & pidto07,5007,MPI_COMM_WORLD,isend07,ierr)
+     & pidto07,basetag+7,MPI_COMM_WORLD,isend07,ierr)
       call MPI_ISEND(a_uuu_s(1,1,1),size(a_uuu_s),MPI_INTEGER,
-     & pidto08,5008,MPI_COMM_WORLD,isend08,ierr)
+     & pidto08,basetag+8,MPI_COMM_WORLD,isend08,ierr)
 
       pidfrom01=get_pid(pidx-1,pidy-1,pidz-1) !a_lll_r 
       pidfrom02=get_pid(pidx+1,pidy-1,pidz-1) !a_ull_r 
@@ -566,21 +628,21 @@
       pidfrom07=get_pid(pidx-1,pidy+1,pidz+1) !a_luu_r 
       pidfrom08=get_pid(pidx+1,pidy+1,pidz+1) !a_uuu_r 
       call MPI_IRECV(a_lll_r(1,1,1),size(a_lll_r),MPI_INTEGER,
-     & pidfrom01,5008,MPI_COMM_WORLD,irecv01,ierr)
+     & pidfrom01,basetag+8,MPI_COMM_WORLD,irecv01,ierr)
       call MPI_IRECV(a_ull_r(1,1,1),size(a_ull_r),MPI_INTEGER,
-     & pidfrom02,5007,MPI_COMM_WORLD,irecv02,ierr)
+     & pidfrom02,basetag+7,MPI_COMM_WORLD,irecv02,ierr)
       call MPI_IRECV(a_lul_r(1,1,1),size(a_lul_r),MPI_INTEGER,
-     & pidfrom03,5006,MPI_COMM_WORLD,irecv03,ierr)
+     & pidfrom03,basetag+6,MPI_COMM_WORLD,irecv03,ierr)
       call MPI_IRECV(a_uul_r(1,1,1),size(a_uul_r),MPI_INTEGER,
-     & pidfrom04,5005,MPI_COMM_WORLD,irecv04,ierr)
+     & pidfrom04,basetag+5,MPI_COMM_WORLD,irecv04,ierr)
       call MPI_IRECV(a_llu_r(1,1,1),size(a_llu_r),MPI_INTEGER,
-     & pidfrom05,5004,MPI_COMM_WORLD,irecv05,ierr)
+     & pidfrom05,basetag+4,MPI_COMM_WORLD,irecv05,ierr)
       call MPI_IRECV(a_ulu_r(1,1,1),size(a_ulu_r),MPI_INTEGER,
-     & pidfrom06,5003,MPI_COMM_WORLD,irecv06,ierr)
+     & pidfrom06,basetag+3,MPI_COMM_WORLD,irecv06,ierr)
       call MPI_IRECV(a_luu_r(1,1,1),size(a_luu_r),MPI_INTEGER,
-     & pidfrom07,5002,MPI_COMM_WORLD,irecv07,ierr)
+     & pidfrom07,basetag+2,MPI_COMM_WORLD,irecv07,ierr)
       call MPI_IRECV(a_uuu_r(1,1,1),size(a_uuu_r),MPI_INTEGER,
-     & pidfrom08,5001,MPI_COMM_WORLD,irecv08,ierr)
+     & pidfrom08,basetag+1,MPI_COMM_WORLD,irecv08,ierr)
 
       call MPI_WAIT(isend01,istatus,ierr)
       call MPI_WAIT(isend02,istatus,ierr)
@@ -1858,6 +1920,12 @@
       integer(4) :: irecv09, irecv10, irecv11, irecv12
 
       integer(4) :: istatus(MPI_STATUS_SIZE), ierr
+      integer(4) :: basetag
+
+      ! Resister the call count to determine the base MPI_TAG value
+      bc_call_count = 1 + bc_call_count
+      basetag = bc_call_count*bc_mpitag_jumpstep
+      bc_max_mpi_tag = max(bc_max_mpi_tag,basetag+bc_mpitag_jumpstep)
 
       !Process coordinate
       call get_pidxyz(pidx, pidy, pidz, myrank)
@@ -1905,22 +1973,22 @@
       pidto06=get_pid(pidx,pidy,pidz+1) ! a_ku_s
       call MPI_ISEND(a_il_s(1-ng,1-ng,1),size(a_il_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto01,5001,MPI_COMM_WORLD,isend01,ierr)
+     & pidto01,basetag+1,MPI_COMM_WORLD,isend01,ierr)
       call MPI_ISEND(a_iu_s(1-ng,1-ng,1),size(a_iu_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto02,5002,MPI_COMM_WORLD,isend02,ierr)
+     & pidto02,basetag+2,MPI_COMM_WORLD,isend02,ierr)
       call MPI_ISEND(a_jl_s(1-ng,1-ng,1),size(a_jl_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto03,5003,MPI_COMM_WORLD,isend03,ierr)
+     & pidto03,basetag+3,MPI_COMM_WORLD,isend03,ierr)
       call MPI_ISEND(a_ju_s(1-ng,1-ng,1),size(a_ju_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto04,5004,MPI_COMM_WORLD,isend04,ierr)
+     & pidto04,basetag+4,MPI_COMM_WORLD,isend04,ierr)
       call MPI_ISEND(a_kl_s(1-ng,1-ng,1),size(a_kl_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto05,5005,MPI_COMM_WORLD,isend05,ierr)
+     & pidto05,basetag+5,MPI_COMM_WORLD,isend05,ierr)
       call MPI_ISEND(a_ku_s(1-ng,1-ng,1),size(a_ku_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto06,5006,MPI_COMM_WORLD,isend06,ierr)
+     & pidto06,basetag+6,MPI_COMM_WORLD,isend06,ierr)
 
       pidfrom01=get_pid(pidx-1,pidy,pidz) ! a_il_r
       pidfrom02=get_pid(pidx+1,pidy,pidz) ! a_iu_r
@@ -1930,22 +1998,22 @@
       pidfrom06=get_pid(pidx,pidy,pidz+1) ! a_ku_r
       call MPI_IRECV(a_il_r(1-ng,1-ng,1),size(a_il_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom01,5002,MPI_COMM_WORLD,irecv01,ierr)
+     & pidfrom01,basetag+2,MPI_COMM_WORLD,irecv01,ierr)
       call MPI_IRECV(a_iu_r(1-ng,1-ng,1),size(a_iu_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom02,5001,MPI_COMM_WORLD,irecv02,ierr)
+     & pidfrom02,basetag+1,MPI_COMM_WORLD,irecv02,ierr)
       call MPI_IRECV(a_jl_r(1-ng,1-ng,1),size(a_jl_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom03,5004,MPI_COMM_WORLD,irecv03,ierr)
+     & pidfrom03,basetag+4,MPI_COMM_WORLD,irecv03,ierr)
       call MPI_IRECV(a_ju_r(1-ng,1-ng,1),size(a_ju_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom04,5003,MPI_COMM_WORLD,irecv04,ierr)
+     & pidfrom04,basetag+3,MPI_COMM_WORLD,irecv04,ierr)
       call MPI_IRECV(a_kl_r(1-ng,1-ng,1),size(a_kl_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom05,5006,MPI_COMM_WORLD,irecv05,ierr)
+     & pidfrom05,basetag+6,MPI_COMM_WORLD,irecv05,ierr)
       call MPI_IRECV(a_ku_r(1-ng,1-ng,1),size(a_ku_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom06,5005,MPI_COMM_WORLD,irecv06,ierr)
+     & pidfrom06,basetag+5,MPI_COMM_WORLD,irecv06,ierr)
 
       call MPI_WAIT(isend01,istatus,ierr)
       call MPI_WAIT(isend02,istatus,ierr)
@@ -1976,40 +2044,40 @@
       pidto12=get_pid(pidx+1,pidy,pidz+1) ! a_kuiu_s
       call MPI_ISEND(a_iljl_s(1-ng,1,1),size(a_iljl_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto01,5001,MPI_COMM_WORLD,isend01,ierr)
+     & pidto01,basetag+1,MPI_COMM_WORLD,isend01,ierr)
       call MPI_ISEND(a_ilju_s(1-ng,1,1),size(a_ilju_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto02,5002,MPI_COMM_WORLD,isend02,ierr)
+     & pidto02,basetag+2,MPI_COMM_WORLD,isend02,ierr)
       call MPI_ISEND(a_iujl_s(1-ng,1,1),size(a_iujl_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto03,5003,MPI_COMM_WORLD,isend03,ierr)
+     & pidto03,basetag+3,MPI_COMM_WORLD,isend03,ierr)
       call MPI_ISEND(a_iuju_s(1-ng,1,1),size(a_iuju_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto04,5004,MPI_COMM_WORLD,isend04,ierr)
+     & pidto04,basetag+4,MPI_COMM_WORLD,isend04,ierr)
       call MPI_ISEND(a_jlkl_s(1-ng,1,1),size(a_jlkl_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto05,5005,MPI_COMM_WORLD,isend05,ierr)
+     & pidto05,basetag+5,MPI_COMM_WORLD,isend05,ierr)
       call MPI_ISEND(a_jlku_s(1-ng,1,1),size(a_jlku_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto06,5006,MPI_COMM_WORLD,isend06,ierr)
+     & pidto06,basetag+6,MPI_COMM_WORLD,isend06,ierr)
       call MPI_ISEND(a_jukl_s(1-ng,1,1),size(a_jukl_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto07,5007,MPI_COMM_WORLD,isend07,ierr)
+     & pidto07,basetag+7,MPI_COMM_WORLD,isend07,ierr)
       call MPI_ISEND(a_juku_s(1-ng,1,1),size(a_juku_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto08,5008,MPI_COMM_WORLD,isend08,ierr)
+     & pidto08,basetag+8,MPI_COMM_WORLD,isend08,ierr)
       call MPI_ISEND(a_klil_s(1-ng,1,1),size(a_klil_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto09,5009,MPI_COMM_WORLD,isend09,ierr)
+     & pidto09,basetag+9,MPI_COMM_WORLD,isend09,ierr)
       call MPI_ISEND(a_kliu_s(1-ng,1,1),size(a_kliu_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto10,5010,MPI_COMM_WORLD,isend10,ierr)
+     & pidto10,basetag+10,MPI_COMM_WORLD,isend10,ierr)
       call MPI_ISEND(a_kuil_s(1-ng,1,1),size(a_kuil_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto11,5011,MPI_COMM_WORLD,isend11,ierr)
+     & pidto11,basetag+11,MPI_COMM_WORLD,isend11,ierr)
       call MPI_ISEND(a_kuiu_s(1-ng,1,1),size(a_kuiu_s),
      & MPI_DOUBLE_PRECISION,
-     & pidto12,5012,MPI_COMM_WORLD,isend12,ierr)
+     & pidto12,basetag+12,MPI_COMM_WORLD,isend12,ierr)
 
       pidfrom01=get_pid(pidx-1,pidy-1,pidz) ! a_iljl_r
       pidfrom02=get_pid(pidx-1,pidy+1,pidz) ! a_ilju_r
@@ -2025,40 +2093,40 @@
       pidfrom12=get_pid(pidx+1,pidy,pidz+1) ! a_kuiu_r
       call MPI_IRECV(a_iljl_r(1-ng,1,1),size(a_iljl_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom01,5004,MPI_COMM_WORLD,irecv01,ierr)
+     & pidfrom01,basetag+4,MPI_COMM_WORLD,irecv01,ierr)
       call MPI_IRECV(a_ilju_r(1-ng,1,1),size(a_ilju_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom02,5003,MPI_COMM_WORLD,irecv02,ierr)
+     & pidfrom02,basetag+3,MPI_COMM_WORLD,irecv02,ierr)
       call MPI_IRECV(a_iujl_r(1-ng,1,1),size(a_iujl_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom03,5002,MPI_COMM_WORLD,irecv03,ierr)
+     & pidfrom03,basetag+2,MPI_COMM_WORLD,irecv03,ierr)
       call MPI_IRECV(a_iuju_r(1-ng,1,1),size(a_iuju_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom04,5001,MPI_COMM_WORLD,irecv04,ierr)
+     & pidfrom04,basetag+1,MPI_COMM_WORLD,irecv04,ierr)
       call MPI_IRECV(a_jlkl_r(1-ng,1,1),size(a_jlkl_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom05,5008,MPI_COMM_WORLD,irecv05,ierr)
+     & pidfrom05,basetag+8,MPI_COMM_WORLD,irecv05,ierr)
       call MPI_IRECV(a_jlku_r(1-ng,1,1),size(a_jlku_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom06,5007,MPI_COMM_WORLD,irecv06,ierr)
+     & pidfrom06,basetag+7,MPI_COMM_WORLD,irecv06,ierr)
       call MPI_IRECV(a_jukl_r(1-ng,1,1),size(a_jukl_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom07,5006,MPI_COMM_WORLD,irecv07,ierr)
+     & pidfrom07,basetag+6,MPI_COMM_WORLD,irecv07,ierr)
       call MPI_IRECV(a_juku_r(1-ng,1,1),size(a_juku_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom08,5005,MPI_COMM_WORLD,irecv08,ierr)
+     & pidfrom08,basetag+5,MPI_COMM_WORLD,irecv08,ierr)
       call MPI_IRECV(a_klil_r(1-ng,1,1),size(a_klil_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom09,5012,MPI_COMM_WORLD,irecv09,ierr)
+     & pidfrom09,basetag+12,MPI_COMM_WORLD,irecv09,ierr)
       call MPI_IRECV(a_kliu_r(1-ng,1,1),size(a_kliu_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom10,5011,MPI_COMM_WORLD,irecv10,ierr)
+     & pidfrom10,basetag+11,MPI_COMM_WORLD,irecv10,ierr)
       call MPI_IRECV(a_kuil_r(1-ng,1,1),size(a_kuil_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom11,5010,MPI_COMM_WORLD,irecv11,ierr)
+     & pidfrom11,basetag+10,MPI_COMM_WORLD,irecv11,ierr)
       call MPI_IRECV(a_kuiu_r(1-ng,1,1),size(a_kuiu_r),
      & MPI_DOUBLE_PRECISION,
-     & pidfrom12,5009,MPI_COMM_WORLD,irecv12,ierr)
+     & pidfrom12,basetag+9,MPI_COMM_WORLD,irecv12,ierr)
 
 
       call MPI_WAIT(isend01,istatus,ierr)
@@ -2097,21 +2165,21 @@
       pidto07=get_pid(pidx-1,pidy+1,pidz+1) !a_luu_s 
       pidto08=get_pid(pidx+1,pidy+1,pidz+1) !a_uuu_s 
       call MPI_ISEND(a_lll_s(1,1,1),size(a_lll_s),MPI_DOUBLE_PRECISION,
-     & pidto01,5001,MPI_COMM_WORLD,isend01,ierr)
+     & pidto01,basetag+1,MPI_COMM_WORLD,isend01,ierr)
       call MPI_ISEND(a_ull_s(1,1,1),size(a_ull_s),MPI_DOUBLE_PRECISION,
-     & pidto02,5002,MPI_COMM_WORLD,isend02,ierr)
+     & pidto02,basetag+2,MPI_COMM_WORLD,isend02,ierr)
       call MPI_ISEND(a_lul_s(1,1,1),size(a_lul_s),MPI_DOUBLE_PRECISION,
-     & pidto03,5003,MPI_COMM_WORLD,isend03,ierr)
+     & pidto03,basetag+3,MPI_COMM_WORLD,isend03,ierr)
       call MPI_ISEND(a_uul_s(1,1,1),size(a_uul_s),MPI_DOUBLE_PRECISION,
-     & pidto04,5004,MPI_COMM_WORLD,isend04,ierr)
+     & pidto04,basetag+4,MPI_COMM_WORLD,isend04,ierr)
       call MPI_ISEND(a_llu_s(1,1,1),size(a_llu_s),MPI_DOUBLE_PRECISION,
-     & pidto05,5005,MPI_COMM_WORLD,isend05,ierr)
+     & pidto05,basetag+5,MPI_COMM_WORLD,isend05,ierr)
       call MPI_ISEND(a_ulu_s(1,1,1),size(a_ulu_s),MPI_DOUBLE_PRECISION,
-     & pidto06,5006,MPI_COMM_WORLD,isend06,ierr)
+     & pidto06,basetag+6,MPI_COMM_WORLD,isend06,ierr)
       call MPI_ISEND(a_luu_s(1,1,1),size(a_luu_s),MPI_DOUBLE_PRECISION,
-     & pidto07,5007,MPI_COMM_WORLD,isend07,ierr)
+     & pidto07,basetag+7,MPI_COMM_WORLD,isend07,ierr)
       call MPI_ISEND(a_uuu_s(1,1,1),size(a_uuu_s),MPI_DOUBLE_PRECISION,
-     & pidto08,5008,MPI_COMM_WORLD,isend08,ierr)
+     & pidto08,basetag+8,MPI_COMM_WORLD,isend08,ierr)
 
       pidfrom01=get_pid(pidx-1,pidy-1,pidz-1) !a_lll_r 
       pidfrom02=get_pid(pidx+1,pidy-1,pidz-1) !a_ull_r 
@@ -2122,21 +2190,21 @@
       pidfrom07=get_pid(pidx-1,pidy+1,pidz+1) !a_luu_r 
       pidfrom08=get_pid(pidx+1,pidy+1,pidz+1) !a_uuu_r 
       call MPI_IRECV(a_lll_r(1,1,1),size(a_lll_r),MPI_DOUBLE_PRECISION,
-     & pidfrom01,5008,MPI_COMM_WORLD,irecv01,ierr)
+     & pidfrom01,basetag+8,MPI_COMM_WORLD,irecv01,ierr)
       call MPI_IRECV(a_ull_r(1,1,1),size(a_ull_r),MPI_DOUBLE_PRECISION,
-     & pidfrom02,5007,MPI_COMM_WORLD,irecv02,ierr)
+     & pidfrom02,basetag+7,MPI_COMM_WORLD,irecv02,ierr)
       call MPI_IRECV(a_lul_r(1,1,1),size(a_lul_r),MPI_DOUBLE_PRECISION,
-     & pidfrom03,5006,MPI_COMM_WORLD,irecv03,ierr)
+     & pidfrom03,basetag+6,MPI_COMM_WORLD,irecv03,ierr)
       call MPI_IRECV(a_uul_r(1,1,1),size(a_uul_r),MPI_DOUBLE_PRECISION,
-     & pidfrom04,5005,MPI_COMM_WORLD,irecv04,ierr)
+     & pidfrom04,basetag+5,MPI_COMM_WORLD,irecv04,ierr)
       call MPI_IRECV(a_llu_r(1,1,1),size(a_llu_r),MPI_DOUBLE_PRECISION,
-     & pidfrom05,5004,MPI_COMM_WORLD,irecv05,ierr)
+     & pidfrom05,basetag+4,MPI_COMM_WORLD,irecv05,ierr)
       call MPI_IRECV(a_ulu_r(1,1,1),size(a_ulu_r),MPI_DOUBLE_PRECISION,
-     & pidfrom06,5003,MPI_COMM_WORLD,irecv06,ierr)
+     & pidfrom06,basetag+3,MPI_COMM_WORLD,irecv06,ierr)
       call MPI_IRECV(a_luu_r(1,1,1),size(a_luu_r),MPI_DOUBLE_PRECISION,
-     & pidfrom07,5002,MPI_COMM_WORLD,irecv07,ierr)
+     & pidfrom07,basetag+2,MPI_COMM_WORLD,irecv07,ierr)
       call MPI_IRECV(a_uuu_r(1,1,1),size(a_uuu_r),MPI_DOUBLE_PRECISION,
-     & pidfrom08,5001,MPI_COMM_WORLD,irecv08,ierr)
+     & pidfrom08,basetag+1,MPI_COMM_WORLD,irecv08,ierr)
 
       call MPI_WAIT(isend01,istatus,ierr)
       call MPI_WAIT(isend02,istatus,ierr)

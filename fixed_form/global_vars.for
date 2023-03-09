@@ -3,9 +3,9 @@
       integer(4) :: im,jm,km,np ! variables for global indices
       integer(4) :: iml,jml,kml ! variables for local indices' bound
 
-      real(8) :: DXL=1.0e-6
-      real(8) :: DYL=1.0e-6
-      real(8) :: DZL=1.0e-6
+      real(8) :: DXL=0.1
+      real(8) :: DYL=0.1
+      real(8) :: DZL=0.1
 
       !Variables for MPI parallelization
       integer(4) :: NPX, NPY, NPZ

@@ -8,6 +8,7 @@
       integer(4) :: istatus(MPI_STATUS_SIZE)
       integer(4),allocatable :: a(:,:,:,:)
       real(8),allocatable :: b(:,:,:,:)
+      real(8),allocatable :: c(:,:,:,:)
       integer(4) :: numghost
       integer(4) :: il,iu, jl,ju, kl,ku
       integer(4) :: ilb, iub, jlb, jub, klb, kub
@@ -15,15 +16,16 @@
       integer(4) :: i,j,k,nn, ll
       integer(4) :: ig, jg, kg
       integer(4) :: ierr
+      integer(4) :: pidx, pidy, pidz
 
-      NPX = 2
-      NPY = 2
-      NPZ = 2
+      NPX = 4
+      NPY = 4
+      NPZ = 1
 
-      im = 4
-      jm = 4
+      im = 64
+      jm = 64
       km = 4
-      np = 2
+      np = 5
 
       numghost = 2
 
@@ -46,65 +48,47 @@
 
       allocate(a(ilb:iub,jlb:jub,klb:kub,np))
       allocate(b(ilb:iub,jlb:jub,klb:kub,np))
+      allocate(c(ilb:iub,jlb:jub,klb:kub,0:1))
 
       !initialization
       a(:,:,:,:) = 0
       b(:,:,:,:) = 0.0
+      c(:,:,:,:) = 0.0
+      call distance_from_center(c(:,:,:,told(1)),numghost,1)
 
-      do k=1,kml
-      do j=1,jml
-      do i=1,iml
-            call get_global_ijk(ig,jg,kg,i,j,k,myrank)
-            a(i,j,k,1)=(ig-1) + (jg-1)*(im) + (kg-1)*(im)*(jm)
-            a(i,j,k,2)=myrank 
-            b(i,j,k,1)=(ig-1) + (jg-1)*(im) + (kg-1)*(im)*(jm)
-            b(i,j,k,2)=myrank 
-      enddo
-      enddo
-      enddo
-
-      !call print_array_i4(a(:,:,:,1),numghost,ilb,iub,jlb,jub,klb,kub)
-
-      !call boundary_condition_i4_par('periodic',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_x',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_y',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_z',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_xy',a(:,:,:,1),numghost)
-      !call boundary_condition_i4_par('adiabatic_yz',a(:,:,:,1),numghost)
-      call boundary_condition_i4_par('adiabatic_zx',a(:,:,:,1),numghost)
+      call init_bc_call_count(0)
 
       do i=1,1000
-      if(myrank.eq.0)then
-            write(*,*)'# of calls: ',i
+      call init_bc_call_count(0)
+
+      call boundary_condition_r8_par('periodic',c(:,:,:,told(i))
+     &                                                    ,numghost)
+
+      call simple_diffusion(c(:,:,:,tnew(i)),c(:,:,:,told(i)), 
+     &                                                  numghost, i)
+
+      if(mod(i,100).eq.0)then
+      call boundary_condition_r8_par('periodic',c(:,:,:,tnew(i))
+     &                                                    ,numghost)
+      call output_r8_pvtr(c(:,:,:,tnew(i)),numghost,'c',i,myrank 
+     &                     ,"test pvtr")
+
+            if(myrank.eq.0)then
+                  call verbose_bc_call_count()
+                  call verbose_bc_max_mpi_tag()
+            endif
       endif
-      call boundary_condition_i4_par('periodic',a(:,:,:,1),numghost)
-      call boundary_condition_i4_par('periodic',a(:,:,:,2),numghost)
-      enddo
-
-      !call print_array_i4(a(:,:,:,1),numghost,ilb,iub,jlb,jub,klb,kub)
-
-      call output_i4_raw(a(:,:,:,1),numghost,'a1',0,myrank,'test data')
-
-      call output_i4_pvtr(a(:,:,:,1),numghost,'a1',0,myrank 
-     &                     ,"test pvtr")
-
-  
-      call boundary_condition_r8_par('adiabatic_zx',b(:,:,:,1),numghost)
-
-      !call print_array_r8(b(:,:,:,1),numghost,ilb,iub,jlb,jub,klb,kub)
-
-      call output_r8_raw(b(:,:,:,1),numghost,'b1',0,myrank,'test data')
-
-      call output_r8_pvtr(b(:,:,:,1),numghost,'b1',0,myrank 
-     &                     ,"test pvtr")
+ 
+      enddo !do i=1,1000
 
 
       deallocate(a)
       deallocate(b)
+      deallocate(c)
       call MPI_FINALIZE(ierr)
 
-      end program bctest_par
+
+      contains
 
 
       subroutine print_aijk(a,ng)
@@ -128,3 +112,82 @@
       enddo
 
       end subroutine print_aijk
+
+
+      subroutine distance_from_center(a,ng,timestep)
+      use input
+      use boundary_conditions
+      implicit none
+      include 'mpif.h'
+
+      real(8),intent(inout) :: a(1-ng:iml+ng,1-ng:jml+ng,1-ng:kml+ng)
+      integer(4),intent(in) :: ng, timestep
+
+      integer(4) :: i,j,k, ig,jg,kg
+      real(8) :: rsq, r
+
+      do k=1,kml
+      do j=1,jml
+      do i=1,iml
+            call get_global_ijk(ig,jg,kg,i,j,k,myrank)
+            rsq=(ig-IM/2)**2+(jg-JM/2)**2+(kg-KM/2)**2
+            r=sqrt(rsq) + timestep
+            a(i,j,k)=r
+      enddo
+      enddo
+      enddo
+
+      end subroutine distance_from_center
+
+
+
+      subroutine simple_diffusion(a,ao,ng,timestep)
+      use input
+      use boundary_conditions
+      implicit none
+      include 'mpif.h'
+
+      real(8),intent(inout) :: a(1-ng:iml+ng,1-ng:jml+ng,1-ng:kml+ng)
+      real(8),intent(inout) :: ao(1-ng:iml+ng,1-ng:jml+ng,1-ng:kml+ng)
+      integer(4),intent(in) :: ng, timestep
+
+      real(8) :: D, dx, dt
+
+      integer(4) :: i,j,k
+
+      D=1.0
+      dx=1.0
+      dt=0.8*0.15*DXL*DXL/D
+
+      do k=1,kml
+      do j=1,jml
+      do i=1,iml
+            a(i,j,k)=ao(i,j,k) 
+     &     + D*dt*( (ao(i-1,j,k)-2.0*ao(i,j,k)+ao(i+1,j,k))/DXL/DXL 
+     &             +(ao(i,j-1,k)-2.0*ao(i,j,k)+ao(i,j+1,k))/DYL/DYL  
+     &             +(ao(i,j,k-1)-2.0*ao(i,j,k)+ao(i,j,k+1))/DZL/DZL ) 
+      enddo
+      enddo
+      enddo
+
+      end subroutine simple_diffusion
+
+
+      integer(4) function told(n)
+      implicit none
+      integer(4),intent(in) :: n
+
+      told=int(mod(n,2))
+      return
+      end function told
+
+
+      integer(4) function tnew(n)
+      implicit none
+      integer(4),intent(in) :: n
+
+      tnew=int(mod(n+1,2))
+      return
+      end function tnew
+
+      end program bctest_par
