@@ -1,3 +1,98 @@
+!      ! Author: Dong-Uk Kim (GitHub: eastglow-zz)
+
+!      ! ========= Example usage of boundary_conditions module: =========
+!      
+!      program example_boundary_conditions
+!      use mpi_f08  ! Necessary dependency
+!      use boundary_conditions 
+!      implicit none  
+!
+!      integer(4) :: npx, npy, npz 
+!      integer(4) :: imori, jmori, kmori 
+!      integer(4) :: nprocs
+!      integer(4) :: myrank  
+!      integer(4) :: numghost 
+!      integer(4) :: ierr 
+!      type(MPI_Comm) :: comm 
+!      integer(4),allocatable :: integer4_array(:,:,:)
+!      real(8),allocatable :: real8_array(:,:,:)
+!
+!      npx = 2  ! # of parallel partitioning along x-axis
+!      npy = 2  ! # of parallel partitioning along y-axis
+!      npz = 1  ! # of parallal partitioning along z-axis
+!      imori = 32  ! # of global grid along x-axis 
+!      jmori = 32  ! # of global grid along y-axis
+!      kmori = 2   ! # of global grid along z-axis 
+!      
+!      numghost = 1 ! # of ghost layer, maximum: 2
+!
+!      ! Initialization of MPI routines 
+!      comm = MPI_COMM_WORLD
+!      call MPI_INIT(ierr)
+!      call MPI_COMM_SIZE(comm,nprocs,ierr)
+!      call MPI_COMM_RANK(comm,myrank,ierr)
+!
+!      ! Initialization of boundary_conditions module (necessary)
+!      call init_bc(NPX,NPY,NPZ,IMORI,JMORI,KMORI,myrank, comm)
+!      ! Now you can use bc_iml, bc_jml, bc_kml, and bc_dimx, bc_dimy, bc_dimz to allocate the local data arrays
+!      ! bc_iml, bc_jml, bc_kml: the number of local grid along x,y,z axis respectively 
+!      ! bc_dimx, bc_dimy, bc_dimz: dimension on/off switch integer.
+!      !   in 3D case, bc_dimx=1, bc_dimy=1, bc_dimz=1.
+!      !   if 2D in xy plane, bc_dimx=1, bc_dimy=1, bc_dimz=0, 
+!      !     and etc...
+!
+!      ! Local data array allocations (necessary)
+!      allocate(
+!        integer4_array(1-numghost*bc_dimx:bc_iml+numghost*bc_dimx,
+!     &                 1-numghost*bc_dimy:bc_jml+numghost*bc_dimy,
+!     &                 1-numghost*bc_dimz:bc_kml+numghost*bc_dimz ) )
+!
+!      allocate(
+!        real8_array(   1-numghost*bc_dimx:bc_iml+numghost*bc_dimx,
+!     &                 1-numghost*bc_dimy:bc_jml+numghost*bc_dimy,
+!     &                 1-numghost*bc_dimz:bc_kml+numghost*bc_dimz ) )
+!
+!      integer4_array(:,:,:) = myrank 
+!      real8_array(:,:,:) = myrank
+!
+!      ! Use of boundary condition routines (necessary)
+!      call boundary_condition_i4('ADIABATIC',
+!     &                                   integer4_array(:,:,:),numghost)
+!
+!      call boundary_condition_r8('ADIABATIC',
+!     &                                      real8_array(:,:,:),numghost)
+!
+!      ! reinitialization of MPI tag values (necessary)
+!      call bc_call_count(0)
+!
+!      ! Finalizing boundary_conditions module (necessary)
+!      call finalize_bc()
+!
+!      call MPI_FINALIZE(ierr)
+!
+!      end program example_boundary_conditions
+
+!      ! ================================================================
+!      ! ========= Available boundary condition routines:       =========
+
+!      boundary_condition_r8(bctype, array3d_name, num_ghost_grid) ! For real(8) arrays
+!      boundary_condition_r4(bctype, array3d_name, num_ghost_grid) ! For real(8) arrays 
+!      boundary_condition_i4(bctype, array3d_name, num_ghost_grid) ! For integer(4) arrays
+
+!      ! ================================================================
+!      ! ========= Available boundary condition types (all UPPER CASE LETTERS): 
+
+!      PERIODIC
+!      ADIABATIC
+!      ADIABATIC_X
+!      ADIABATIC_Y
+!      ADIABATIC_Z
+!      ADIABATIC_XY
+!      ADIABATIC_YZ
+!      ADIABATIC_ZX
+
+!      ! ================================================================
+      
       module boundary_conditions
       use mpi_f08
       implicit none
@@ -6,6 +101,9 @@
       integer(4) :: bc_max_mpi_tag = 0
       integer(4),parameter :: bc_mpitag_jumpstep = 13
       integer(4),parameter :: bc_ng_max = 2
+
+      integer(4) :: bc_dimen 
+      integer(4) :: bc_dimx, bc_dimy, bc_dimz
 
       integer(4) :: bc_npx=1, bc_npy=1, bc_npz=1 !Number of partitioning along x,y, and z axis
       integer(4) :: bc_iml, bc_jml, bc_kml 
@@ -19,9 +117,15 @@
 
       type(MPI_Comm) :: bc_comm
 
-      type(MPI_Datatype) :: bc_xslab(1:bc_ng_max)
-      type(MPI_Datatype) :: bc_yslab(1:bc_ng_max)
-      type(MPI_Datatype) :: bc_zslab(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_xslab_r8(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_yslab_r8(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_zslab_r8(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_xslab_r4(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_yslab_r4(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_zslab_r4(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_xslab_i4(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_yslab_i4(1:bc_ng_max)
+      type(MPI_Datatype) :: bc_zslab_i4(1:bc_ng_max)
       integer(4) :: bc_idx_start(3) = (/0, 0, 0/)
       integer(4) :: bc_arrsize(3,1:bc_ng_max)
       integer(4) :: bc_subsize_x(3,1:bc_ng_max)
@@ -37,6 +141,16 @@
       ! ----------------------------------------------------------------
 
       subroutine init_bc(inpx,inpy,inpz,i_all,j_all,k_all,irank,comm)
+
+      ! inpx: The number of parallel partitioning along x-axis
+      ! inpy: The number of parallel partitioning along y-axis 
+      ! inpz: The number of parallel partitioning along z-axis 
+      ! i_all: The number of grid before the parallel partitioning, along x-axis 
+      ! j_all: The number of grid before the parallel partitioning, along y-axis
+      ! k_all: The number of grid before the parallel partitioning, along z-axis 
+      ! irank: Rank of this process 
+      ! comm: MPI communicator handle
+
       implicit none
       integer(4),intent(in) :: inpx,inpy,inpz !saved in bc_npx, bc_npy, bc_npz
       integer(4),intent(in) :: i_all, j_all, k_all !saved in bc_imori,bc_jmori,bc_kmori
@@ -55,6 +169,8 @@
       bc_imori = i_all
       bc_jmori = j_all
       bc_kmori = k_all
+
+      call bc_get_dimension(i_all,j_all,k_all)
       
       ! Saving the neighbor process ids, assuming the periodicity
       bc_pidg = irank
@@ -90,6 +206,11 @@
         bc_arrsize(2,ng) = 2*ng + bc_jml
         bc_arrsize(3,ng) = 2*ng + bc_kml
 
+        ! For 2D (or 1D - not guaranteed)
+        if(bc_dimx .eq. 0) bc_arrsize(1,ng) = 1
+        if(bc_dimy .eq. 0) bc_arrsize(2,ng) = 1
+        if(bc_dimz .eq. 0) bc_arrsize(3,ng) = 1
+
         bc_subsize_x(1,ng) = ng
         bc_subsize_x(2,ng) = bc_arrsize(2,ng)
         bc_subsize_x(3,ng) = bc_arrsize(3,ng)
@@ -102,20 +223,53 @@
         bc_subsize_z(2,ng) = bc_arrsize(2,ng)
         bc_subsize_z(3,ng) = ng
 
+        ! For real(8) type arrays
         call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
      &             bc_subsize_x(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
-     &                         MPI_DOUBLE_PRECISION, bc_xslab(ng), ierr)
-        call mpi_type_commit(bc_xslab(ng), ierr)
+     &                      MPI_DOUBLE_PRECISION, bc_xslab_r8(ng), ierr)
+        call mpi_type_commit(bc_xslab_r8(ng), ierr)
 
         call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
      &             bc_subsize_y(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
-     &                         MPI_DOUBLE_PRECISION, bc_yslab(ng), ierr)
-        call mpi_type_commit(bc_yslab(ng), ierr)
+     &                      MPI_DOUBLE_PRECISION, bc_yslab_r8(ng), ierr)
+        call mpi_type_commit(bc_yslab_r8(ng), ierr)
 
         call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
      &             bc_subsize_z(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
-     &                         MPI_DOUBLE_PRECISION, bc_zslab(ng), ierr)
-        call mpi_type_commit(bc_zslab(ng), ierr)
+     &                      MPI_DOUBLE_PRECISION, bc_zslab_r8(ng), ierr)
+        call mpi_type_commit(bc_zslab_r8(ng), ierr)
+
+        ! For real(4) type arrays
+        call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
+     &             bc_subsize_x(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
+     &                                  MPI_REAL, bc_xslab_r4(ng), ierr)
+        call mpi_type_commit(bc_xslab_r4(ng), ierr)
+
+        call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
+     &             bc_subsize_y(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
+     &                                  MPI_REAL, bc_yslab_r4(ng), ierr)
+        call mpi_type_commit(bc_yslab_r4(ng), ierr)
+
+        call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
+     &             bc_subsize_z(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
+     &                                  MPI_REAL, bc_zslab_r4(ng), ierr)
+        call mpi_type_commit(bc_zslab_r4(ng), ierr)
+
+        ! For integer(4) type arrays
+        call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
+     &             bc_subsize_x(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
+     &                               MPI_INTEGER, bc_xslab_i4(ng), ierr)
+        call mpi_type_commit(bc_xslab_i4(ng), ierr)
+
+        call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
+     &             bc_subsize_y(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
+     &                               MPI_INTEGER, bc_yslab_i4(ng), ierr)
+        call mpi_type_commit(bc_yslab_i4(ng), ierr)
+
+        call mpi_type_create_subarray(3, bc_arrsize(:,ng), 
+     &             bc_subsize_z(:,ng), bc_idx_start, MPI_ORDER_FORTRAN,
+     &                               MPI_INTEGER, bc_zslab_i4(ng), ierr)
+        call mpi_type_commit(bc_zslab_i4(ng), ierr)
       enddo
 
       call init_bc_call_count(0)
@@ -131,13 +285,46 @@
       integer(4) :: ierr
 
       do ng=1,bc_ng_max
-        call mpi_type_free(bc_xslab(ng),ierr)
-        call mpi_type_free(bc_yslab(ng),ierr)
-        call mpi_type_free(bc_zslab(ng),ierr)
+        call mpi_type_free(bc_xslab_r8(ng),ierr)
+        call mpi_type_free(bc_yslab_r8(ng),ierr)
+        call mpi_type_free(bc_zslab_r8(ng),ierr)
+        call mpi_type_free(bc_xslab_r4(ng),ierr)
+        call mpi_type_free(bc_yslab_r4(ng),ierr)
+        call mpi_type_free(bc_zslab_r4(ng),ierr)
+        call mpi_type_free(bc_xslab_i4(ng),ierr)
+        call mpi_type_free(bc_yslab_i4(ng),ierr)
+        call mpi_type_free(bc_zslab_i4(ng),ierr)
       enddo 
 
       return 
       end subroutine finalize_bc
+
+      ! ----------------------------------------------------------------
+
+      subroutine bc_get_dimension(im, jm, km)
+      implicit none 
+
+      integer(4),intent(in) :: im, jm, km
+
+      bc_dimx = 1 
+      bc_dimy = 1
+      bc_dimz = 1
+      if(im .le. 1) bc_dimx = 0
+      if(jm .le. 1) bc_dimy = 0
+      if(km .le. 1) bc_dimz = 0 
+      bc_dimen = bc_dimx + bc_dimy + bc_dimz
+      ! write(*,*)'Dimension:', dimen
+      ! write(*,*)'dimx, dimy, dimz:', dimx, dimy, dimz
+      ! write(*,*)'imori, jmori, kmori:', imori, jmori, kmori
+      if(bc_dimen .eq. 0) then
+        write(*,*)'Error, bc_get_dimension() in M410_bc_modern.for'
+        write(*,*)'  No dimension specified'
+        write(*,*)'  Aborting...'
+        call abort()
+      end if
+
+      return 
+      end subroutine bc_get_dimension
 
       ! ----------------------------------------------------------------
 
@@ -809,14 +996,15 @@
 
       ! ----------------------------------------------------------------
 
-      subroutine boundary_condition_r8_modern(bctype,a,ngx,ngy,ngz)
+      subroutine boundary_condition_r8(bctype,a,ng)
       implicit none
 
       !Subroutine arguments
       character(len=*),intent(in) :: bctype
-      integer(4),intent(in) :: ngx,ngy,ngz
-      real(8),intent(inout) :: 
-     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+      integer(4),intent(in) :: ng
+      real(8),intent(inout) :: a( 1-ng*bc_dimx:bc_iml+ng*bc_dimx,
+     &                            1-ng*bc_dimy:bc_jml+ng*bc_dimy,
+     &                            1-ng*bc_dimz:bc_kml+ng*bc_dimz )
 
       !Local variables
       integer(4) :: il,iu,jl,ju,kl,ku
@@ -839,6 +1027,7 @@
       type(MPI_Status) :: istatus
       integer(4) :: ierr
       integer(4) :: basetag
+      integer(4) :: ngx, ngy, ngz
 
       if ( bc_initialized .eqv. .false.) then
         write(*,*)'Error, boundary_condition_r8_modern:'
@@ -851,6 +1040,10 @@
       basetag = bc_call_count*bc_mpitag_jumpstep
       bc_max_mpi_tag = max(bc_max_mpi_tag,basetag+bc_mpitag_jumpstep)
 
+      ngx = bc_dimx*ng
+      ngy = bc_dimy*ng
+      ngz = bc_dimz*ng
+
       il = 1-ngx
       iu = bc_iml+ngx
       jl = 1-ngy
@@ -862,19 +1055,19 @@
       ! i planes
       if(bc_npx.gt.1.and.ngx.gt.0)then
         pidto01=bc_pidg_xm ! il_s
-        call MPI_ISEND(a(1,jl,kl),        1, bc_xslab(ngx), pidto01,
+        call MPI_ISEND(a(1,jl,kl),       1, bc_xslab_r8(ngx), pidto01,
      &                                basetag+1, bc_comm, isend01, ierr)
 
         pidfrom02=bc_pidg_xp ! iu_r
-        call MPI_IRECV(a(bc_iml+1,jl,kl),   1, bc_xslab(ngx), pidfrom02,
+        call MPI_IRECV(a(bc_iml+1,jl,kl),1, bc_xslab_r8(ngx), pidfrom02,
      &                                basetag+1, bc_comm, irecv02, ierr)
 
         pidto02=bc_pidg_xp ! iu_s
-        call MPI_ISEND(a(bc_iml-ngx+1,jl,kl), 1,bc_xslab(ngx), pidto02,
+        call MPI_ISEND(a(bc_iml-ngx+1,jl,kl),1,bc_xslab_r8(ngx),pidto02,
      &                                basetag+2, bc_comm, isend02, ierr)      
 
         pidfrom01=bc_pidg_xm ! il_r
-        call MPI_IRECV(a(il,jl,kl),       1, bc_xslab(ngx), pidfrom01,
+        call MPI_IRECV(a(il,jl,kl),      1, bc_xslab_r8(ngx), pidfrom01,
      &                                basetag+2, bc_comm, irecv01, ierr)
             
         call MPI_WAIT(isend01,istatus,ierr)
@@ -887,19 +1080,19 @@
       ! j planes
       if(bc_npy.gt.1.and.ngy.gt.0)then
         pidto03=bc_pidg_ym ! jl_s
-        call MPI_ISEND(a(il,1,kl), 1,        bc_yslab(ngy), pidto03,
+        call MPI_ISEND(a(il,1,kl), 1,        bc_yslab_r8(ngy), pidto03,
      &                                basetag+3, bc_comm, isend03, ierr)
 
         pidfrom04=bc_pidg_yp ! ju_r
-        call MPI_IRECV(a(il,bc_jml+1,kl), 1,   bc_yslab(ngy), pidfrom04, 
+        call MPI_IRECV(a(il,bc_jml+1,kl), 1,bc_yslab_r8(ngy), pidfrom04, 
      &                                basetag+3, bc_comm, irecv04, ierr)
 
         pidto04=bc_pidg_yp ! ju_s
-        call MPI_ISEND(a(il,bc_jml-ngy+1,kl), 1,bc_yslab(ngy), pidto04,
+        call MPI_ISEND(a(il,bc_jml-ngy+1,kl),1,bc_yslab_r8(ngy),pidto04,
      &                                basetag+4, bc_comm, isend04, ierr)
 
         pidfrom03=bc_pidg_ym ! jl_r      
-        call MPI_IRECV(a(il,jl,kl), 1,       bc_yslab(ngy), pidfrom03,
+        call MPI_IRECV(a(il,jl,kl), 1,     bc_yslab_r8(ngy), pidfrom03,
      &                                basetag+4, bc_comm, irecv03, ierr)
 
         call MPI_WAIT(isend03,istatus,ierr)
@@ -912,19 +1105,19 @@
       ! k planes
       if(bc_npz.gt.1.and.ngz.gt.0)then
         pidto05=bc_pidg_zm ! kl_s
-        call MPI_ISEND(a(il,jl,1), 1,        bc_zslab(ngz), pidto05,
+        call MPI_ISEND(a(il,jl,1), 1,        bc_zslab_r8(ngz), pidto05,
      &                                basetag+5, bc_comm, isend05, ierr)
 
         pidfrom06=bc_pidg_zp ! ku_r
-        call MPI_IRECV(a(il,jl,bc_kml+1), 1,   bc_zslab(ngz), pidfrom06,
+        call MPI_IRECV(a(il,jl,bc_kml+1), 1,bc_zslab_r8(ngz), pidfrom06,
      &                                basetag+5, bc_comm, irecv06, ierr)
             
         pidto06=bc_pidg_zp ! ku_s
-        call MPI_ISEND(a(il,jl,bc_kml-ngz+1), 1,bc_zslab(ngz), pidto06,
+        call MPI_ISEND(a(il,jl,bc_kml-ngz+1),1,bc_zslab_r8(ngz),pidto06,
      &                                basetag+6, bc_comm, isend06, ierr)
 
         pidfrom05=bc_pidg_zm ! kl_r
-        call MPI_IRECV(a(il,jl,kl), 1,       bc_zslab(ngz), pidfrom05,
+        call MPI_IRECV(a(il,jl,kl), 1,      bc_zslab_r8(ngz), pidfrom05,
      &                                basetag+6, bc_comm, irecv05, ierr)
 
         call MPI_WAIT(isend05,istatus,ierr)
@@ -972,7 +1165,1048 @@
       end select !select case(trim(bctype))
 
       return 
-      end subroutine boundary_condition_r8_modern
+      end subroutine boundary_condition_r8
+
+      ! ----------------------------------------------------------------
+
+
+      subroutine apply_adiabatic_bc_r4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      real(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+      integer(4) :: pidx,pidy,pidz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_adiabatic_bc_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      call get_pidxyz(pidx, pidy, pidz, bc_pidg)
+
+      if(pidx .eq. 0 .and. ngx .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(1-lg,j,k) = a(lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidx .eq. bc_npx-1 .and. ngx .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(bc_iml+lg,j,k) = a(bc_iml+1-lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidy .eq. 0 .and. ngy .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngy
+            a(i,1-lg,k) = a(i,lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidy .eq. bc_npy-1 .and. ngy .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngy
+            a(i,bc_jml+lg,k) = a(i,bc_jml+1-lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidz .eq. 0 .and. ngz .gt. 0) then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,1-lg) = a(i,j,lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidz .eq. bc_npz-1 .and. ngz .gt. 0) then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,bc_kml+lg) = a(i,j,bc_kml+1-lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_adiabatic_bc_r4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_adiabatic_x_bc_r4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      real(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+      integer(4) :: pidx,pidy,pidz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_adiabatic_x_bc_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      call get_pidxyz(pidx, pidy, pidz, bc_pidg)
+
+      if(pidx .eq. 0 .and. ngx .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(1-lg,j,k) = a(lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidx .eq. bc_npx-1 .and. ngx .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(bc_iml+lg,j,k) = a(bc_iml+1-lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_adiabatic_x_bc_r4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_adiabatic_y_bc_r4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      real(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+      integer(4) :: pidx,pidy,pidz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_adiabatic_y_bc_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      call get_pidxyz(pidx, pidy, pidz, bc_pidg)
+
+      if(pidy .eq. 0 .and. ngy .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngy
+            a(i,1-lg,k) = a(i,lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidy .eq. bc_npy-1 .and. ngy .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngy
+            a(i,bc_jml+lg,k) = a(i,bc_jml+1-lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_adiabatic_y_bc_r4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_adiabatic_z_bc_r4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      real(4),intent(inout) ::
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+      integer(4) :: pidx,pidy,pidz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_adiabatic_z_bc_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      call get_pidxyz(pidx, pidy, pidz, bc_pidg)
+
+      if(pidz .eq. 0 .and. ngz .gt. 0) then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,1-lg) = a(i,j,lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidz .eq. bc_npz-1 .and. ngz .gt. 0) then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,bc_kml+lg) = a(i,j,bc_kml+1-lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_adiabatic_z_bc_r4
+
+      !-----------------------------------------------------------------
+
+      subroutine apply_periodic_bc_r4(a,ngx,ngy,ngz)
+      implicit none
+      integer(4),intent(in) :: ngx,ngy,ngz
+      real(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+
+      if(bc_npx.gt.1.and.bc_npy.gt.1.and.bc_npz.gt.1)then
+            return
+      endif
+
+      if(bc_npx.eq.1.and.ngx.gt.0)then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(-ngx+lg,j,k) = a(bc_iml-ngx+lg,j,k)
+            a(bc_iml+lg,j,k) = a(lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(bc_npy.eq.1.and.ngy.gt.0)then
+        do i=1-ngx,bc_iml+ngx
+        do k=1-ngz,bc_kml+ngz
+          do lg=1,ngy
+            a(i,-ngy+lg,k) = a(i,bc_jml-ngy+lg,k)
+            a(i,bc_jml+lg,k) = a(i,lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+      
+      if(bc_npz.eq.1.and.ngz.gt.0)then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,-ngz+lg) = a(i,j,bc_kml-ngz+lg)
+            a(i,j,bc_kml+lg) = a(i,j,lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      end subroutine apply_periodic_bc_r4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_periodic_x_bc_r4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      real(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_periodic_bc_x_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      if(bc_npx.eq.1.and.ngx.gt.0)then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(-ngx+lg,j,k) = a(bc_iml-ngx+lg,j,k)
+            a(bc_iml+lg,j,k) = a(lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_periodic_x_bc_r4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_periodic_y_bc_r4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      real(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_periodic_bc_y_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      if(bc_npy.eq.1.and.ngy.gt.0)then
+        do i=1-ngx,bc_iml+ngx
+        do k=1-ngz,bc_kml+ngz
+          do lg=1,ngy
+            a(i,-ngy+lg,k) = a(i,bc_jml-ngy+lg,k)
+            a(i,bc_jml+lg,k) = a(i,lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_periodic_y_bc_r4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_periodic_z_bc_r4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      real(4),intent(inout) ::
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_periodic_bc_z_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      if(bc_npz.eq.1.and.ngz.gt.0)then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,-ngz+lg) = a(i,j,bc_kml-ngz+lg)
+            a(i,j,bc_kml+lg) = a(i,j,lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_periodic_z_bc_r4
+
+      ! ----------------------------------------------------------------
+
+      subroutine boundary_condition_r4(bctype,a,ng)
+      implicit none
+
+      !Subroutine arguments
+      character(len=*),intent(in) :: bctype
+      integer(4),intent(in) :: ng
+      real(4),intent(inout) :: a( 1-ng*bc_dimx:bc_iml+ng*bc_dimx,
+     &                            1-ng*bc_dimy:bc_jml+ng*bc_dimy,
+     &                            1-ng*bc_dimz:bc_kml+ng*bc_dimz )
+
+      !Local variables
+      integer(4) :: il,iu,jl,ju,kl,ku
+
+      ! MPI parallelization variables
+      integer(4) :: pidto01, pidto02
+      integer(4) :: pidto03, pidto04
+      integer(4) :: pidto05, pidto06
+      integer(4) :: pidfrom01, pidfrom02
+      integer(4) :: pidfrom03, pidfrom04
+      integer(4) :: pidfrom05, pidfrom06
+
+      type(MPI_Request) :: isend01, isend02
+      type(MPI_Request) :: isend03, isend04
+      type(MPI_Request) :: isend05, isend06
+      type(MPI_Request) :: irecv01, irecv02
+      type(MPI_Request) :: irecv03, irecv04
+      type(MPI_Request) :: irecv05, irecv06
+
+      type(MPI_Status) :: istatus
+      integer(4) :: ierr
+      integer(4) :: basetag
+      integer(4) :: ngx, ngy, ngz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, boundary_condition_r8_modern:'
+        write(*,*)'boundary condition uninitialized. Aborting.'
+        call abort
+      endif
+
+      ! Resister the call count to determine the base MPI_TAG value
+      bc_call_count = 1 + bc_call_count
+      basetag = bc_call_count*bc_mpitag_jumpstep
+      bc_max_mpi_tag = max(bc_max_mpi_tag,basetag+bc_mpitag_jumpstep)
+
+      ngx = bc_dimx*ng
+      ngy = bc_dimy*ng
+      ngz = bc_dimz*ng
+
+      il = 1-ngx
+      iu = bc_iml+ngx
+      jl = 1-ngy
+      ju = bc_jml+ngy
+      kl = 1-ngz
+      ku = bc_kml+ngz
+
+      ! Internal transfers
+      ! i planes
+      if(bc_npx.gt.1.and.ngx.gt.0)then
+        pidto01=bc_pidg_xm ! il_s
+        call MPI_ISEND(a(1,jl,kl),       1, bc_xslab_r4(ngx), pidto01,
+     &                                basetag+1, bc_comm, isend01, ierr)
+
+        pidfrom02=bc_pidg_xp ! iu_r
+        call MPI_IRECV(a(bc_iml+1,jl,kl),1, bc_xslab_r4(ngx), pidfrom02,
+     &                                basetag+1, bc_comm, irecv02, ierr)
+
+        pidto02=bc_pidg_xp ! iu_s
+        call MPI_ISEND(a(bc_iml-ngx+1,jl,kl),1,bc_xslab_r4(ngx),pidto02,
+     &                                basetag+2, bc_comm, isend02, ierr)      
+
+        pidfrom01=bc_pidg_xm ! il_r
+        call MPI_IRECV(a(il,jl,kl),      1, bc_xslab_r4(ngx), pidfrom01,
+     &                                basetag+2, bc_comm, irecv01, ierr)
+            
+        call MPI_WAIT(isend01,istatus,ierr)
+        call MPI_WAIT(isend02,istatus,ierr)
+        call MPI_WAIT(irecv01,istatus,ierr)
+        call MPI_WAIT(irecv02,istatus,ierr)
+      endif !if(bc_npx.gt.1.and.ngx.gt.0)then
+      ! Done only for x direction - not complete yet
+
+      ! j planes
+      if(bc_npy.gt.1.and.ngy.gt.0)then
+        pidto03=bc_pidg_ym ! jl_s
+        call MPI_ISEND(a(il,1,kl), 1,        bc_yslab_r4(ngy), pidto03,
+     &                                basetag+3, bc_comm, isend03, ierr)
+
+        pidfrom04=bc_pidg_yp ! ju_r
+        call MPI_IRECV(a(il,bc_jml+1,kl), 1,bc_yslab_r4(ngy), pidfrom04, 
+     &                                basetag+3, bc_comm, irecv04, ierr)
+
+        pidto04=bc_pidg_yp ! ju_s
+        call MPI_ISEND(a(il,bc_jml-ngy+1,kl),1,bc_yslab_r4(ngy),pidto04,
+     &                                basetag+4, bc_comm, isend04, ierr)
+
+        pidfrom03=bc_pidg_ym ! jl_r      
+        call MPI_IRECV(a(il,jl,kl), 1,     bc_yslab_r4(ngy), pidfrom03,
+     &                                basetag+4, bc_comm, irecv03, ierr)
+
+        call MPI_WAIT(isend03,istatus,ierr)
+        call MPI_WAIT(isend04,istatus,ierr)
+        call MPI_WAIT(irecv03,istatus,ierr)
+        call MPI_WAIT(irecv04,istatus,ierr)
+      endif !if(bc_npy.gt.1.and.ngy.gt.0)then
+      ! Done for x and y direction - not completed yet
+
+      ! k planes
+      if(bc_npz.gt.1.and.ngz.gt.0)then
+        pidto05=bc_pidg_zm ! kl_s
+        call MPI_ISEND(a(il,jl,1), 1,        bc_zslab_r4(ngz), pidto05,
+     &                                basetag+5, bc_comm, isend05, ierr)
+
+        pidfrom06=bc_pidg_zp ! ku_r
+        call MPI_IRECV(a(il,jl,bc_kml+1), 1,bc_zslab_r4(ngz), pidfrom06,
+     &                                basetag+5, bc_comm, irecv06, ierr)
+            
+        pidto06=bc_pidg_zp ! ku_s
+        call MPI_ISEND(a(il,jl,bc_kml-ngz+1),1,bc_zslab_r4(ngz),pidto06,
+     &                                basetag+6, bc_comm, isend06, ierr)
+
+        pidfrom05=bc_pidg_zm ! kl_r
+        call MPI_IRECV(a(il,jl,kl), 1,      bc_zslab_r4(ngz), pidfrom05,
+     &                                basetag+6, bc_comm, irecv05, ierr)
+
+        call MPI_WAIT(isend05,istatus,ierr)
+        call MPI_WAIT(isend06,istatus,ierr)
+        call MPI_WAIT(irecv05,istatus,ierr)
+        call MPI_WAIT(irecv06,istatus,ierr)
+      endif !if(bc_npz.gt.1.and.ngz.gt.0)then
+      ! Internal tranfoer done for all directions - complete
+
+      ! Applying the actual boundary conditions
+      select case(trim(bctype))
+      case('PERIODIC')
+        call apply_periodic_bc_r4(a, ngx, ngy, ngz)
+      case('ADIABATIC')
+        call apply_adiabatic_bc_r4(a, ngx, ngy, ngz)
+      case('ADIABATIC_XY')
+        call apply_periodic_z_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_x_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_y_bc_r4(a, ngx, ngy, ngz)
+      case('ADIABATIC_YZ')
+        call apply_periodic_x_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_y_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_z_bc_r4(a, ngx, ngy, ngz)
+      case('ADIABATIC_ZX')
+        call apply_periodic_y_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_z_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_x_bc_r4(a, ngx, ngy, ngz)
+      case('ADIABATIC_X')
+        call apply_periodic_y_bc_r4(a, ngx, ngy, ngz)
+        call apply_periodic_z_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_x_bc_r4(a, ngx, ngy, ngz)
+      case('ADIABATIC_Y')
+        call apply_periodic_x_bc_r4(a, ngx, ngy, ngz)
+        call apply_periodic_z_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_y_bc_r4(a, ngx, ngy, ngz)
+      case('ADIABATIC_Z')
+        call apply_periodic_x_bc_r4(a, ngx, ngy, ngz)
+        call apply_periodic_y_bc_r4(a, ngx, ngy, ngz)
+        call apply_adiabatic_z_bc_r4(a, ngx, ngy, ngz)
+      case default 
+        write(*,*)'boundary_conditions module: fatal error:'
+        write(*,*)'  bctype = ',trim(bctype)
+        write(*,*)'  unknown boundary condition type. Aborting.'
+        call abort
+      end select !select case(trim(bctype))
+
+      return 
+      end subroutine boundary_condition_r4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_adiabatic_bc_i4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      integer(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+      integer(4) :: pidx,pidy,pidz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_adiabatic_bc_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      call get_pidxyz(pidx, pidy, pidz, bc_pidg)
+
+      if(pidx .eq. 0 .and. ngx .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(1-lg,j,k) = a(lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidx .eq. bc_npx-1 .and. ngx .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(bc_iml+lg,j,k) = a(bc_iml+1-lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidy .eq. 0 .and. ngy .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngy
+            a(i,1-lg,k) = a(i,lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidy .eq. bc_npy-1 .and. ngy .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngy
+            a(i,bc_jml+lg,k) = a(i,bc_jml+1-lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidz .eq. 0 .and. ngz .gt. 0) then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,1-lg) = a(i,j,lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidz .eq. bc_npz-1 .and. ngz .gt. 0) then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,bc_kml+lg) = a(i,j,bc_kml+1-lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_adiabatic_bc_i4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_adiabatic_x_bc_i4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      integer(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+      integer(4) :: pidx,pidy,pidz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_adiabatic_x_bc_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      call get_pidxyz(pidx, pidy, pidz, bc_pidg)
+
+      if(pidx .eq. 0 .and. ngx .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(1-lg,j,k) = a(lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidx .eq. bc_npx-1 .and. ngx .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(bc_iml+lg,j,k) = a(bc_iml+1-lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_adiabatic_x_bc_i4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_adiabatic_y_bc_i4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      integer(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+      integer(4) :: pidx,pidy,pidz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_adiabatic_y_bc_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      call get_pidxyz(pidx, pidy, pidz, bc_pidg)
+
+      if(pidy .eq. 0 .and. ngy .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngy
+            a(i,1-lg,k) = a(i,lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidy .eq. bc_npy-1 .and. ngy .gt. 0) then
+        do k=1-ngz,bc_kml+ngz
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngy
+            a(i,bc_jml+lg,k) = a(i,bc_jml+1-lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_adiabatic_y_bc_i4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_adiabatic_z_bc_i4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      integer(4),intent(inout) ::
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+      integer(4) :: pidx,pidy,pidz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_adiabatic_z_bc_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      call get_pidxyz(pidx, pidy, pidz, bc_pidg)
+
+      if(pidz .eq. 0 .and. ngz .gt. 0) then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,1-lg) = a(i,j,lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(pidz .eq. bc_npz-1 .and. ngz .gt. 0) then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,bc_kml+lg) = a(i,j,bc_kml+1-lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_adiabatic_z_bc_i4
+
+      !-----------------------------------------------------------------
+
+      subroutine apply_periodic_bc_i4(a,ngx,ngy,ngz)
+      implicit none
+      integer(4),intent(in) :: ngx,ngy,ngz
+      integer(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+
+      if(bc_npx.gt.1.and.bc_npy.gt.1.and.bc_npz.gt.1)then
+            return
+      endif
+
+      if(bc_npx.eq.1.and.ngx.gt.0)then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(-ngx+lg,j,k) = a(bc_iml-ngx+lg,j,k)
+            a(bc_iml+lg,j,k) = a(lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      if(bc_npy.eq.1.and.ngy.gt.0)then
+        do i=1-ngx,bc_iml+ngx
+        do k=1-ngz,bc_kml+ngz
+          do lg=1,ngy
+            a(i,-ngy+lg,k) = a(i,bc_jml-ngy+lg,k)
+            a(i,bc_jml+lg,k) = a(i,lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+      
+      if(bc_npz.eq.1.and.ngz.gt.0)then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,-ngz+lg) = a(i,j,bc_kml-ngz+lg)
+            a(i,j,bc_kml+lg) = a(i,j,lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      end subroutine apply_periodic_bc_i4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_periodic_x_bc_i4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      integer(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_periodic_bc_x_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      if(bc_npx.eq.1.and.ngx.gt.0)then
+        do k=1-ngz,bc_kml+ngz
+        do j=1-ngy,bc_jml+ngy
+          do lg=1,ngx
+            a(-ngx+lg,j,k) = a(bc_iml-ngx+lg,j,k)
+            a(bc_iml+lg,j,k) = a(lg,j,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_periodic_x_bc_i4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_periodic_y_bc_i4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      integer(4),intent(inout) :: 
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_periodic_bc_y_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      if(bc_npy.eq.1.and.ngy.gt.0)then
+        do i=1-ngx,bc_iml+ngx
+        do k=1-ngz,bc_kml+ngz
+          do lg=1,ngy
+            a(i,-ngy+lg,k) = a(i,bc_jml-ngy+lg,k)
+            a(i,bc_jml+lg,k) = a(i,lg,k)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_periodic_y_bc_i4
+
+      ! ----------------------------------------------------------------
+
+      subroutine apply_periodic_z_bc_i4(a, ngx, ngy, ngz)
+      implicit none
+      integer(4),intent(in) :: ngx, ngy, ngz
+      integer(4),intent(inout) ::
+     &             a(1-ngx:bc_iml+ngx,1-ngy:bc_jml+ngy,1-ngz:bc_kml+ngz)
+
+      integer(4) :: i,j,k,lg
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, apply_periodic_bc_z_r8:'
+        write(*,*)'  boundary condition uninitialized. Aborting.'
+        call abort()
+      endif
+
+      if(bc_npz.eq.1.and.ngz.gt.0)then
+        do j=1-ngy,bc_jml+ngy
+        do i=1-ngx,bc_iml+ngx
+          do lg=1,ngz
+            a(i,j,-ngz+lg) = a(i,j,bc_kml-ngz+lg)
+            a(i,j,bc_kml+lg) = a(i,j,lg)
+          enddo
+        enddo
+        enddo
+      endif
+
+      return 
+      end subroutine apply_periodic_z_bc_i4
+
+      ! ----------------------------------------------------------------
+
+      subroutine boundary_condition_i4(bctype,a,ng)
+      implicit none
+
+      !Subroutine arguments
+      character(len=*),intent(in) :: bctype
+      integer(4),intent(in) :: ng
+      integer(4),intent(inout) :: a( 1-ng*bc_dimx:bc_iml+ng*bc_dimx,
+     &                               1-ng*bc_dimy:bc_jml+ng*bc_dimy,
+     &                               1-ng*bc_dimz:bc_kml+ng*bc_dimz )
+
+      !Local variables
+      integer(4) :: il,iu,jl,ju,kl,ku
+
+      ! MPI parallelization variables
+      integer(4) :: pidto01, pidto02
+      integer(4) :: pidto03, pidto04
+      integer(4) :: pidto05, pidto06
+      integer(4) :: pidfrom01, pidfrom02
+      integer(4) :: pidfrom03, pidfrom04
+      integer(4) :: pidfrom05, pidfrom06
+
+      type(MPI_Request) :: isend01, isend02
+      type(MPI_Request) :: isend03, isend04
+      type(MPI_Request) :: isend05, isend06
+      type(MPI_Request) :: irecv01, irecv02
+      type(MPI_Request) :: irecv03, irecv04
+      type(MPI_Request) :: irecv05, irecv06
+
+      type(MPI_Status) :: istatus
+      integer(4) :: ierr
+      integer(4) :: basetag
+      integer(4) :: ngx, ngy, ngz
+
+      if ( bc_initialized .eqv. .false.) then
+        write(*,*)'Error, boundary_condition_r8_modern:'
+        write(*,*)'boundary condition uninitialized. Aborting.'
+        call abort
+      endif
+
+      ! Resister the call count to determine the base MPI_TAG value
+      bc_call_count = 1 + bc_call_count
+      basetag = bc_call_count*bc_mpitag_jumpstep
+      bc_max_mpi_tag = max(bc_max_mpi_tag,basetag+bc_mpitag_jumpstep)
+
+      ngx = bc_dimx*ng
+      ngy = bc_dimy*ng
+      ngz = bc_dimz*ng
+
+      il = 1-ngx
+      iu = bc_iml+ngx
+      jl = 1-ngy
+      ju = bc_jml+ngy
+      kl = 1-ngz
+      ku = bc_kml+ngz
+
+      ! Internal transfers
+      ! i planes
+      if(bc_npx.gt.1.and.ngx.gt.0)then
+        pidto01=bc_pidg_xm ! il_s
+        call MPI_ISEND(a(1,jl,kl),        1, bc_xslab_i4(ngx), pidto01,
+     &                                basetag+1, bc_comm, isend01, ierr)
+
+        pidfrom02=bc_pidg_xp ! iu_r
+        call MPI_IRECV(a(bc_iml+1,jl,kl),1, bc_xslab_i4(ngx), pidfrom02,
+     &                                basetag+1, bc_comm, irecv02, ierr)
+
+        pidto02=bc_pidg_xp ! iu_s
+        call MPI_ISEND(a(bc_iml-ngx+1,jl,kl),1,bc_xslab_i4(ngx),pidto02,
+     &                                basetag+2, bc_comm, isend02, ierr)      
+
+        pidfrom01=bc_pidg_xm ! il_r
+        call MPI_IRECV(a(il,jl,kl),      1, bc_xslab_i4(ngx), pidfrom01,
+     &                                basetag+2, bc_comm, irecv01, ierr)
+            
+        call MPI_WAIT(isend01,istatus,ierr)
+        call MPI_WAIT(isend02,istatus,ierr)
+        call MPI_WAIT(irecv01,istatus,ierr)
+        call MPI_WAIT(irecv02,istatus,ierr)
+      endif !if(bc_npx.gt.1.and.ngx.gt.0)then
+      ! Done only for x direction - not complete yet
+
+      ! j planes
+      if(bc_npy.gt.1.and.ngy.gt.0)then
+        pidto03=bc_pidg_ym ! jl_s
+        call MPI_ISEND(a(il,1,kl), 1,        bc_yslab_i4(ngy), pidto03,
+     &                                basetag+3, bc_comm, isend03, ierr)
+
+        pidfrom04=bc_pidg_yp ! ju_r
+        call MPI_IRECV(a(il,bc_jml+1,kl), 1,bc_yslab_i4(ngy), pidfrom04, 
+     &                                basetag+3, bc_comm, irecv04, ierr)
+
+        pidto04=bc_pidg_yp ! ju_s
+        call MPI_ISEND(a(il,bc_jml-ngy+1,kl),1,bc_yslab_i4(ngy),pidto04,
+     &                                basetag+4, bc_comm, isend04, ierr)
+
+        pidfrom03=bc_pidg_ym ! jl_r      
+        call MPI_IRECV(a(il,jl,kl), 1,       bc_yslab_i4(ngy),pidfrom03,
+     &                                basetag+4, bc_comm, irecv03, ierr)
+
+        call MPI_WAIT(isend03,istatus,ierr)
+        call MPI_WAIT(isend04,istatus,ierr)
+        call MPI_WAIT(irecv03,istatus,ierr)
+        call MPI_WAIT(irecv04,istatus,ierr)
+      endif !if(bc_npy.gt.1.and.ngy.gt.0)then
+      ! Done for x and y direction - not completed yet
+
+      ! k planes
+      if(bc_npz.gt.1.and.ngz.gt.0)then
+        pidto05=bc_pidg_zm ! kl_s
+        call MPI_ISEND(a(il,jl,1), 1,        bc_zslab_i4(ngz), pidto05,
+     &                                basetag+5, bc_comm, isend05, ierr)
+
+        pidfrom06=bc_pidg_zp ! ku_r
+        call MPI_IRECV(a(il,jl,bc_kml+1), 1, bc_zslab_i4(ngz),pidfrom06,
+     &                                basetag+5, bc_comm, irecv06, ierr)
+            
+        pidto06=bc_pidg_zp ! ku_s
+        call MPI_ISEND(a(il,jl,bc_kml-ngz+1),1,bc_zslab_i4(ngz),pidto06,
+     &                                basetag+6, bc_comm, isend06, ierr)
+
+        pidfrom05=bc_pidg_zm ! kl_r
+        call MPI_IRECV(a(il,jl,kl), 1,      bc_zslab_i4(ngz), pidfrom05,
+     &                                basetag+6, bc_comm, irecv05, ierr)
+
+        call MPI_WAIT(isend05,istatus,ierr)
+        call MPI_WAIT(isend06,istatus,ierr)
+        call MPI_WAIT(irecv05,istatus,ierr)
+        call MPI_WAIT(irecv06,istatus,ierr)
+      endif !if(bc_npz.gt.1.and.ngz.gt.0)then
+      ! Internal tranfoer done for all directions - complete
+
+      ! Applying the actual boundary conditions
+      select case(trim(bctype))
+      case('PERIODIC')
+        call apply_periodic_bc_i4(a, ngx, ngy, ngz)
+      case('ADIABATIC')
+        call apply_adiabatic_bc_i4(a, ngx, ngy, ngz)
+      case('ADIABATIC_XY')
+        call apply_periodic_z_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_x_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_y_bc_i4(a, ngx, ngy, ngz)
+      case('ADIABATIC_YZ')
+        call apply_periodic_x_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_y_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_z_bc_i4(a, ngx, ngy, ngz)
+      case('ADIABATIC_ZX')
+        call apply_periodic_y_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_z_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_x_bc_i4(a, ngx, ngy, ngz)
+      case('ADIABATIC_X')
+        call apply_periodic_y_bc_i4(a, ngx, ngy, ngz)
+        call apply_periodic_z_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_x_bc_i4(a, ngx, ngy, ngz)
+      case('ADIABATIC_Y')
+        call apply_periodic_x_bc_i4(a, ngx, ngy, ngz)
+        call apply_periodic_z_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_y_bc_i4(a, ngx, ngy, ngz)
+      case('ADIABATIC_Z')
+        call apply_periodic_x_bc_i4(a, ngx, ngy, ngz)
+        call apply_periodic_y_bc_i4(a, ngx, ngy, ngz)
+        call apply_adiabatic_z_bc_i4(a, ngx, ngy, ngz)
+      case default 
+        write(*,*)'boundary_conditions module: fatal error:'
+        write(*,*)'  bctype = ',trim(bctype)
+        write(*,*)'  unknown boundary condition type. Aborting.'
+        call abort
+      end select !select case(trim(bctype))
+
+      return 
+      end subroutine boundary_condition_i4
 
       ! ----------------------------------------------------------------
 

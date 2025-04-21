@@ -28,18 +28,20 @@
       bctype = 'ADIABATIC'
 
       NPX = 2
-      NPY = 1
-      NPZ = 2
+      NPY = 2
+      NPZ = 1
 
       imori = 32
-      jmori = 2
-      kmori = 32
+      jmori = 32
+      kmori = 1
       np = 5
 
+      call get_dimension(imori, jmori, kmori)
+
       numghost = 2
-      ngx = numghost
-      ngy = numghost
-      ngz = numghost
+      ngx = numghost * dimx
+      ngy = numghost * dimy
+      ngz = numghost * dimz
 
       comm = MPI_COMM_WORLD
       call MPI_INIT(ierr)
@@ -86,20 +88,20 @@
       do i=0,1000
         call init_bc_call_count(0)
         !call boundary_condition_r8('PERIODIC',c(:,:,:,told(i))          ! wtime_mpif08.csv
-        call boundary_condition_r8_modern(bctype,c(:,:,:,told(i)),    ! wtime_modern.csv
-     &                                                      ngx,ngy,ngz)
+        call boundary_condition_r8(bctype,c(:,:,:,told(i)), numghost)    ! wtime_modern.csv
 
         call simple_diffusion(c(:,:,:,tnew(i)),c(:,:,:,told(i)), 
      &                                                  ngx,ngy,ngz, i)
 
         if(mod(i,10).eq.0)then
           !call boundary_condition_r8('PERIODIC',c(:,:,:,tnew(i))        ! wtime_mpif08.csv
-          call boundary_condition_r8_modern(bctype,c(:,:,:,tnew(i)),  ! wtime_modern.csv
-     &                                                      ngx,ngy,ngz)
+          call boundary_condition_r8(bctype,c(:,:,:,tnew(i)),numghost)  ! wtime_modern.csv
     !       call output_r8_pvtr_2d(c(:,:,:,tnew(i)),numghost,'c',i,ttime,  
     !  &                                              myrank ,"test pvtr")
-          call output_r8_pvtr(c(:,:,:,tnew(i)),numghost,'c',i,ttime,  
-     &                                              myrank ,"test pvtr")
+    !       call output_r8_pvtr(c(:,:,:,tnew(i)),numghost,'c',i,ttime,  
+    !  &                                              myrank ,"test pvtr")
+          call output_r8_pvtr(c(:,:,:,tnew(i)),numghost,'c',  
+     &                                     i,ttime, myrank ,"test pvtr")
 
           if(myrank.eq.0)then
             call verbose_bc_call_count()
@@ -123,6 +125,7 @@
       deallocate(c)
 
       call finalize_bc()
+      call finalize_pvoutputs()
       call MPI_FINALIZE(ierr)
 
 
