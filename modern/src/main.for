@@ -4,7 +4,9 @@
 
       use input
       use boundary_conditions
+      use diffusion_equation
       use pvoutputs
+
       implicit none
 
       type(MPI_Status) :: istatus
@@ -27,18 +29,22 @@
 
       bctype = 'ADIABATIC'
 
-      NPX = 2
-      NPY = 2
+      NPX = 1
+      NPY = 1
       NPZ = 1
 
-      imori = 32
-      jmori = 32
+      imori = 100
+      jmori = 100
       kmori = 1
-      np = 5
+      np = 1
+
+      DXL = 0.5
+      DYL = 0.5 
+      DZL = 0.5
 
       call get_dimension(imori, jmori, kmori)
 
-      numghost = 2
+      numghost = 1
       ngx = numghost * dimx
       ngy = numghost * dimy
       ngz = numghost * dimz
@@ -78,22 +84,35 @@
       a(:,:,:,:) = 0
       b(:,:,:,:) = 0.0
       c(:,:,:,:) = 0.0
-      call distance_from_center(c(:,:,:,told(0)),ngx,ngy,ngz,1)
+      !call distance_from_center(c(:,:,:,told(0)),ngx,ngy,ngz,1)
+
+      call diffu_ic_stepfunction_x(c(:,:,:,told(0)),ngx,ngy,ngz, 
+     &                                                    1, 5, 100.0d0)
+      call diffu_ic_stepfunction_x(c(:,:,:,tnew(0)),ngx,ngy,ngz, 
+     &                                                    1, 5, 100.0d0)
 
       wtime_start = MPI_WTIME()
 
       call init_bc_call_count(0)
 
       ttime = 0.0d0
-      do i=0,1000
+      do i=0,100000
         call init_bc_call_count(0)
         !call boundary_condition_r8('PERIODIC',c(:,:,:,told(i))          ! wtime_mpif08.csv
         call boundary_condition_r8(bctype,c(:,:,:,told(i)), numghost)    ! wtime_modern.csv
 
-        call simple_diffusion(c(:,:,:,tnew(i)),c(:,:,:,told(i)), 
-     &                                                  ngx,ngy,ngz, i)
+    !     call simple_diffusion(c(:,:,:,tnew(i)),c(:,:,:,told(i)), 
+    !  &                                                  ngx,ngy,ngz, i)
+    !     call diffusion_sourced(c(:,:,:,tnew(i)),c(:,:,:,told(i)), 
+    !  &                                    ngx,ngy,ngz, i,  0.0d0, 0.3d0)
 
-        if(mod(i,10).eq.0)then
+        call diffusion_biphase_box(c(:,:,:,tnew(i)),c(:,:,:,told(i)),
+     &                                                    ngx,ngy,ngz,i, 
+     &                 imori/2-5, imori/2+5, jmori/2-5, jmori/2+5, 1, 1, 
+     &                                                   0.3d0, 100.0d0)
+
+        if(mod(i,1000).eq.0)then
+          write(*,*)'Time step = ', i, 'Output made' 
           !call boundary_condition_r8('PERIODIC',c(:,:,:,tnew(i))        ! wtime_mpif08.csv
           call boundary_condition_r8(bctype,c(:,:,:,tnew(i)),numghost)  ! wtime_modern.csv
     !       call output_r8_pvtr_2d(c(:,:,:,tnew(i)),numghost,'c',i,ttime,  
@@ -110,7 +129,7 @@
         endif
  
         ttime = ttime + dttime
-      enddo !do i=0,10000
+      enddo !do i=0,100000
 
       wtime_end = MPI_WTIME()
 
@@ -184,48 +203,6 @@
 
       end subroutine distance_from_center
 
-      ! ----------------------------------------------------------------
-
-      subroutine simple_diffusion(a,ao,ngx,ngy,ngz,timestep)
-      use input
-      use boundary_conditions
-      implicit none
-
-      integer(4),intent(in) :: ngx,ngy,ngz
-      real(8),intent(inout) :: 
-     &                      a(1-ngx:iml+ngx,1-ngy:jml+ngy,1-ngz:kml+ngz)
-      real(8),intent(inout) :: 
-     &                     ao(1-ngx:iml+ngx,1-ngy:jml+ngy,1-ngz:kml+ngz)
-      integer(4),intent(in) :: timestep
-
-      real(8) :: D, dx, dt
-      real(8) :: axx, ayy, azz 
-
-      integer(4) :: i,j,k
-
-      D=1.0
-      dx=1.0
-      dt=0.8*0.15*DXL*DXL/D
-      dttime = dt
-
-      do k=1,kml
-      do j=1,jml
-      do i=1,iml
-        axx = 0.0d0 
-        ayy = 0.0d0
-        azz = 0.0d0
-        if(ngx.gt.0)
-     &             axx = (ao(i-1,j,k)-2.0*ao(i,j,k)+ao(i+1,j,k))/DXL/DXL
-        if(ngy.gt.0)
-     &             ayy = (ao(i,j-1,k)-2.0*ao(i,j,k)+ao(i,j+1,k))/DYL/DYL
-        if(ngz.gt.0) 
-     &             azz = (ao(i,j,k-1)-2.0*ao(i,j,k)+ao(i,j,k+1))/DZL/DZL
-        a(i,j,k)=ao(i,j,k) + D*dt*( axx + ayy + azz ) 
-      enddo
-      enddo
-      enddo
-
-      end subroutine simple_diffusion
 
       ! ----------------------------------------------------------------
 
