@@ -355,6 +355,294 @@
 
       ! ----------------------------------------------------------------
 
+      subroutine diffusion_inhomo_comp_range(a,ao,mob,pf,ngx,ngy,ngz,
+     &                                                     timestep, dt)
+      implicit none
+      real(8),intent(inout) :: a(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8),intent(in) :: ao(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8),intent(inout) :: mob(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                   1-ngz:kml+ngz)
+      integer(4),intent(in) :: pf(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                   1-ngz:kml+ngz)
+      integer(4),intent(in) :: ngx,ngy,ngz
+      integer(4),intent(in) :: timestep
+      real(8),intent(in) :: dt
+
+      real(8) :: dcdt 
+
+      integer(4) :: i,j,k
+
+      do k=1,kml
+      do j=1,jml  
+      do i=1,iml
+        
+        call calc_dcdt(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
+
+        a(i,j,k)=ao(i,j,k) + dcdt*dt
+
+      enddo
+      enddo
+      enddo
+
+      return 
+      end subroutine diffusion_inhomo_comp_range
+
+      ! ----------------------------------------------------------------
+
+      subroutine calc_diffusion_dt(dt, mob, dx)
+      implicit none
+      real(8), intent(inout) :: dt
+      real(8), intent(in) :: mob(:,:,:)
+      real(8), intent(in) :: dx
+
+      dt = 0.8 * 0.15 * dx * dx / maxval(mob)
+
+      return 
+      end subroutine calc_diffusion_dt
+
+      ! ----------------------------------------------------------------
+
+      subroutine calc_dcdt(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
+      implicit none
+      real(8), intent(inout) :: dcdt
+      integer(4), intent(in) :: i,j,k
+      real(8), intent(in) :: ao(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8), intent(in) :: mob(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: ngx, ngy, ngz
+
+      real(8) :: jxp, jxn 
+      real(8) :: jyp, jyn
+      real(8) :: jzp, jzn
+      real(8) :: div_x, div_y, div_z
+      real(8) :: Meff_xp, Meff_xn 
+      real(8) :: Meff_yp, Meff_yn
+      real(8) :: Meff_zp, Meff_zn
+      real(8),parameter :: smallnumber = 1.0d-10
+
+      if(ngx.gt.0) then 
+        Meff_xp=2.0*mob(i+1,j,k)*mob(i,j,k)/
+     &                             (mob(i+1,j,k)+mob(i,j,k)+smallnumber)
+        Meff_xn=2.0*mob(i,j,k)*mob(i-1,j,k)/
+     &                             (mob(i,j,k)+mob(i-1,j,k)+smallnumber)
+      else
+        Meff_xp = 0.0d0
+        Meff_xn = 0.0d0
+      end if
+      if(ngy.gt.0) then 
+        Meff_yp=2.0*mob(i,j+1,k)*mob(i,j,k)/
+     &                             (mob(i,j+1,k)+mob(i,j,k)+smallnumber)
+        Meff_yn=2.0*mob(i,j,k)*mob(i,j-1,k)/
+     &                             (mob(i,j,k)+mob(i,j-1,k)+smallnumber)
+      else
+        Meff_yp = 0.0d0
+        Meff_yn = 0.0d0
+      end if
+      if(ngz.gt.0) then
+        Meff_zp=2.0*mob(i,j,k+1)*mob(i,j,k)/
+     &                             (mob(i,j,k+1)+mob(i,j,k)+smallnumber)
+        Meff_zn=2.0*mob(i,j,k)*mob(i,j,k-1)/
+     &                             (mob(i,j,k)+mob(i,j,k-1)+smallnumber)
+      else
+        Meff_zp = 0.0d0
+        Meff_zn = 0.0d0
+      end if
+
+      ! Fluxes in x direction
+      if(ngx.gt.0) then
+        jxn = - Meff_xn * (ao(i,j,k) - ao(i-1,j,k)) / DXL
+        jxp = - Meff_xp * (ao(i+1,j,k) - ao(i,j,k)) / DXL
+      else
+        jxn = 0.0d0
+        jxp = 0.0d0
+      end if
+
+      ! Fluxes in y direction
+      if(ngy.gt.0) then
+        jyn = - Meff_yn * (ao(i,j,k) - ao(i,j-1,k)) / DYL
+        jyp = - Meff_yp * (ao(i,j+1,k) - ao(i,j,k)) / DYL
+      else
+        jyn = 0.0d0
+        jyp = 0.0d0
+      end if
+
+      ! Fluxes in z direction
+      if(ngz.gt.0) then
+        jzn = - Meff_zn * (ao(i,j,k) - ao(i,j,k-1)) / DZL
+        jzp = - Meff_zp * (ao(i,j,k+1) - ao(i,j,k)) / DZL
+      else
+        jzn = 0.0d0
+        jzp = 0.0d0
+      end if
+
+      div_x = (jxp - jxn) / DXL 
+      div_y = (jyp - jyn) / DYL
+      div_z = (jzp - jzn) / DZL
+
+      dcdt = - (div_x + div_y + div_z) 
+
+      return 
+      end subroutine calc_dcdt
+
+      ! ----------------------------------------------------------------
+
+      subroutine calc_diffusion_mobility(mob_op,mob,ao,pf,ngx,ngy,ngz,
+     &                                                               dt)
+      implicit none
+      real(8), intent(inout) :: mob_op(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8), intent(in) :: mob(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8), intent(in) :: ao(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: pf(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: ngx, ngy, ngz
+      real(8), intent(in) :: dt 
+
+      real(8) :: cnew_try, dcdt 
+      real(8) :: lowerlimit, upperlimit
+      real(8) :: delta_c, delta_c_upperlimit, delta_c_lowerlimit
+
+      integer(4) :: i,j,k
+      integer(4) :: ig,jg,kg
+
+      do k=1,kml
+      do j=1,jml
+      do i=1,iml
+
+        call calc_dcdt(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
+
+        cnew_try = ao(i,j,k) + dcdt*dt
+
+        delta_c = cnew_try - ao(i,j,k)
+
+        ! Identify concentration limits based on phase
+        call comp_range_by_phase(pf(i,j,k), lowerlimit, upperlimit)
+        delta_c_upperlimit = upperlimit - ao(i,j,k)
+        delta_c_lowerlimit = lowerlimit - ao(i,j,k)
+        ! In case of too much flux coming in - reduce the mobility so that cnew_try < upperlimit
+        if (cnew_try .gt. upperlimit) then
+          mob_op(i,j,k) = 0.0d0
+        ! In case of too much flux going out - reduce the mobility so that cnew_try > lowerlimit
+        ! Make sure the mobility is non-negative value.
+        else if (cnew_try .lt. lowerlimit) then
+          mob_op(i,j,k) = 0.0d0
+        else
+          mob_op(i,j,k) = mob(i,j,k)
+        endif
+      enddo
+      enddo
+      enddo
+
+      return 
+
+      end subroutine calc_diffusion_mobility
+
+
+
+      ! ----------------------------------------------------------------
+
+      subroutine comp_range_by_phase(phaseid, comp_min, comp_max)
+      implicit none
+      integer(4),intent(in) :: phaseid
+      real(8),intent(inout) :: comp_min, comp_max
+
+      select case(phaseid)
+      case(1)  ! Compressible background phase such as air
+        comp_min = 0.0d0
+        comp_max = 1000.0d0
+      case(2)  ! Imcompressible liquid phase 
+        comp_min = 0.0d0
+        comp_max = 1.0d0
+      case(3)  ! Solid solution with limited solubility
+        comp_min = 0.05d0
+        comp_max = 0.06d0
+      case default 
+        write(*,*)'comp_range_by_phase: Unknown phase ID'
+        write(*,*)'  phaseid = ', phaseid
+        write(*,*)'  Aborting...'
+        call abort()
+      end select
+
+      return 
+      end subroutine comp_range_by_phase
+
+      ! ----------------------------------------------------------------
+
+      subroutine phaseid_ic_box(pf, ngx, ngy, ngz, ilb, iub, jlb, jub, 
+     &                                                klb, kub, phaseid)
+      implicit none
+      integer(4),intent(inout) :: pf(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4),intent(in) :: ngx, ngy, ngz
+      integer(4),intent(in) :: ilb, iub, jlb, jub, klb, kub
+      integer(4),intent(in) :: phaseid
+
+      integer(4) :: i, j, k
+      integer(4) :: ig, jg, kg
+
+      do k=1,kml
+      do j=1,jml
+      do i=1,iml
+        call get_global_ijk(ig,jg,kg,i,j,k,myrank)
+        if (ig.ge.ilb .and. ig.le.iub .and. jg.ge.jlb .and. jg.le.jub 
+     &                             .and. kg.ge.klb .and. kg.le.kub) then
+          pf(i,j,k) = phaseid
+        end if
+      end do
+      end do
+      end do
+
+      return
+      end subroutine phaseid_ic_box
+
+      ! ----------------------------------------------------------------
+
+      subroutine diffu_ic_by_phase(a,pf,ngx,ngy,ngz,
+     &                                       c_phase1,c_phase2,c_phase3)
+      implicit none
+      real(8),intent(inout) :: a(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4),intent(in) :: pf(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4),intent(in) :: ngx,ngy,ngz
+      real(8),intent(in) :: c_phase1,c_phase2,c_phase3
+
+      integer(4) :: i,j,k
+
+      do k=1,kml
+      do j=1,jml
+      do i=1,iml
+        select case (pf(i,j,k))
+        case (1)
+          a(i,j,k) = c_phase1
+          ! write(*,*) 'Setting phase 1 at (', i, ',', j, ',', k, ')'
+        case (2)
+          ! write(*,*) 'Setting phase 2 at (', i, ',', j, ',', k, ')'
+          a(i,j,k) = c_phase2
+        case (3)
+          ! write(*,*) 'Setting phase 3 at (', i, ',', j, ',', k, ')'
+          a(i,j,k) = c_phase3
+        case default
+          write(*,*) 'Unknown phase ID at (', i, ',', j, ',', k, ')',
+     &                                                  'pid = ', myrank
+          write(*,*) '  Check phase ID mapping.'
+          write(*,*) '  Aborting...'
+          call abort()
+        end select
+      end do
+      end do
+      end do
+
+      return 
+      end subroutine diffu_ic_by_phase
+
+      ! ----------------------------------------------------------------
+
       subroutine diffu_ic_stepfunction_x(a,ngx,ngy,ngz,ilow,ihigh,val)
       implicit none
       real(8),intent(inout) :: 
@@ -384,5 +672,32 @@
 
       return 
       end subroutine diffu_ic_stepfunction_x
+
+
+      ! ----------------------------------------------------------------
+
+      real(8) function total_amount_c(a,ngx,ngy,ngz)
+      implicit none
+      real(8),intent(in) :: a(1-ngx:iml+ngx,1-ngy:jml+ngy,1-ngz:kml+ngz)
+      integer(4),intent(in) :: ngx,ngy,ngz
+      real(8) :: total
+
+      integer(4) :: i,j,k
+
+      total = 0.0d0
+      do k=1,kml
+      do j=1,jml
+      do i=1,iml
+        total = total + a(i,j,k)
+      end do
+      end do
+      end do
+
+      call MPI_Allreduce(MPI_IN_PLACE, total, 1, MPI_DOUBLE_PRECISION, 
+     &                                          MPI_SUM, MPI_COMM_WORLD)
+
+      total_amount_c = total 
+      
+      end function total_amount_c
 
       end module diffusion_equation

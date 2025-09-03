@@ -14,6 +14,9 @@
       integer(4),allocatable :: a(:,:,:,:)
       real(8),allocatable :: b(:,:,:,:)
       real(8),allocatable :: c(:,:,:,:)
+      integer(4),allocatable :: pf(:,:,:) 
+      real(8),allocatable :: mob(:,:,:)
+      real(8),allocatable :: mob_op(:,:,:)
       integer(4) :: numghost
       integer(4) :: ngx, ngy, ngz
       integer(4) :: il,iu, jl,ju, kl,ku
@@ -25,12 +28,14 @@
       integer(4) :: pidx, pidy, pidz
       real(8) :: wtime_start, wtime_end, wtime 
 
+      real(8) :: total_c 
+
       character(len=100) :: bctype 
 
       bctype = 'ADIABATIC'
 
       NPX = 1
-      NPY = 1
+      NPY = 5
       NPZ = 1
 
       imori = 100
@@ -79,17 +84,33 @@
       allocate(a(ilb:iub,jlb:jub,klb:kub,np))
       allocate(b(ilb:iub,jlb:jub,klb:kub,np))
       allocate(c(ilb:iub,jlb:jub,klb:kub,0:1))
+      allocate(pf(ilb:iub,jlb:jub,klb:kub))
+      allocate(mob(ilb:iub,jlb:jub,klb:kub))
+      allocate(mob_op(ilb:iub,jlb:jub,klb:kub))
 
       !initialization
       a(:,:,:,:) = 0
       b(:,:,:,:) = 0.0
       c(:,:,:,:) = 0.0
+      pf(:,:,:) = 1 ! Compressible background phase
+      mob(:,:,:) = Mobility
+      mob_op(:,:,:) = Mobility
+
+      call phaseid_ic_box(pf,ngx,ngy,ngz, 10, imori, 1, jmori, 1, 1, 2) ! Incompressible liquid phase 
+      call phaseid_ic_box(pf,ngx,ngy,ngz, imori/2-5, imori/2+5, 
+     &                                               1, jmori, 1, 1, 3) ! Incompressible liquid phase
+
       !call distance_from_center(c(:,:,:,told(0)),ngx,ngy,ngz,1)
 
-      call diffu_ic_stepfunction_x(c(:,:,:,told(0)),ngx,ngy,ngz, 
-     &                                                    1, 5, 100.0d0)
-      call diffu_ic_stepfunction_x(c(:,:,:,tnew(0)),ngx,ngy,ngz, 
-     &                                                    1, 5, 100.0d0)
+    !   call diffu_ic_stepfunction_x(c(:,:,:,told(0)),ngx,ngy,ngz, 
+    !  &                                                    1, 5, 100.0d0)
+    !   call diffu_ic_stepfunction_x(c(:,:,:,tnew(0)),ngx,ngy,ngz, 
+    !  &                                                    1, 5, 100.0d0)
+
+      call diffu_ic_by_phase(c(:,:,:,told(0)),pf(:,:,:),ngx,ngy,ngz,
+     &                                          1.0d0, 0.01d0, 0.055d0)
+      call diffu_ic_by_phase(c(:,:,:,tnew(0)),pf(:,:,:),ngx,ngy,ngz,
+     &                                          1.0d0, 0.01d0, 0.055d0)
 
       wtime_start = MPI_WTIME()
 
@@ -99,20 +120,29 @@
       do i=0,100000
         call init_bc_call_count(0)
         !call boundary_condition_r8('PERIODIC',c(:,:,:,told(i))          ! wtime_mpif08.csv
-        call boundary_condition_r8(bctype,c(:,:,:,told(i)), numghost)    ! wtime_modern.csv
+        call boundary_condition_i4(bctype,pf(:,:,:), numghost)
+        call boundary_condition_r8(bctype,c(:,:,:,told(i)), numghost)
+        call boundary_condition_r8(bctype,mob(:,:,:), numghost)
+        
+        call calc_diffusion_dt(dttime, mob, DXL)
+        call calc_diffusion_mobility(mob_op,mob,c(:,:,:,told(i)),pf,
+     &                                              ngx,ngy,ngz, dttime)
+        call boundary_condition_r8(bctype,mob_op(:,:,:), numghost) 
 
     !     call simple_diffusion(c(:,:,:,tnew(i)),c(:,:,:,told(i)), 
     !  &                                                  ngx,ngy,ngz, i)
     !     call diffusion_sourced(c(:,:,:,tnew(i)),c(:,:,:,told(i)), 
     !  &                                    ngx,ngy,ngz, i,  0.0d0, 0.3d0)
 
-        call diffusion_biphase_box(c(:,:,:,tnew(i)),c(:,:,:,told(i)),
-     &                                                    ngx,ngy,ngz,i, 
-     &                 imori/2-5, imori/2+5, jmori/2-5, jmori/2+5, 1, 1, 
-     &                                                   0.3d0, 100.0d0)
+    !     call diffusion_biphase_box(c(:,:,:,tnew(i)),c(:,:,:,told(i)),
+    !  &                                                    ngx,ngy,ngz,i, 
+    !  &                 imori/2-5, imori/2+5, jmori/2-5, jmori/2+5, 1, 1, 
+    !  &                                                   0.3d0, 100.0d0)
+
+        call diffusion_inhomo_comp_range(c(:,:,:,tnew(i)),
+     &   c(:,:,:,told(i)),mob_op(:,:,:),pf(:,:,:),ngx,ngy,ngz,i, dttime)
 
         if(mod(i,1000).eq.0)then
-          write(*,*)'Time step = ', i, 'Output made' 
           !call boundary_condition_r8('PERIODIC',c(:,:,:,tnew(i))        ! wtime_mpif08.csv
           call boundary_condition_r8(bctype,c(:,:,:,tnew(i)),numghost)  ! wtime_modern.csv
     !       call output_r8_pvtr_2d(c(:,:,:,tnew(i)),numghost,'c',i,ttime,  
@@ -121,8 +151,17 @@
     !  &                                              myrank ,"test pvtr")
           call output_r8_pvtr(c(:,:,:,tnew(i)),numghost,'c',  
      &                                     i,ttime, myrank ,"test pvtr")
+          call output_i4_pvtr(pf(:,:,:),numghost,'pf',i,ttime,myrank,
+     &                                                        "phaseID")
+          call output_r8_pvtr(mob(:,:,:),numghost,'mob',i,ttime,myrank,
+     &                                                       "mobility")
+
+          total_c = total_amount_c(c(:,:,:,tnew(i)),ngx,ngy,ngz)
 
           if(myrank.eq.0)then
+            !write(*,*)'Time step = ', i, 'Output made' 
+            write(*,*)'Total concentration at time step ', i, ' = ', 
+     &                                                           total_c
             call verbose_bc_call_count()
             call verbose_bc_max_mpi_tag()
           endif
@@ -142,6 +181,9 @@
       deallocate(a)
       deallocate(b)
       deallocate(c)
+      deallocate(pf)
+      deallocate(mob)
+      deallocate(mob_op)
 
       call finalize_bc()
       call finalize_pvoutputs()
