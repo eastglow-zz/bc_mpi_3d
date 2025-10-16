@@ -17,6 +17,9 @@
       !File output path
       character(len=300) :: opath = './outputs'
 
+      logical :: error_flag = .false. 
+      character(len=1000) :: error_log = 'No errors.'
+
       contains 
 
       ! ----------------------------------------------------------------

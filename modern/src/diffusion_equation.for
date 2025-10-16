@@ -8,6 +8,9 @@
       implicit none 
 
       real(8), parameter :: Mobility = 10.0d0
+      real(8), parameter :: Mob_p1 = 10.0d0
+      real(8), parameter :: Mob_p2 = 1.0d0
+      real(8), parameter :: Mob_p3 = 10.0d0
 
       contains 
 
@@ -31,8 +34,9 @@
       integer(4) :: i,j,k
 
       D=1.0
-      dx=1.0
-      dt=0.8*0.15*DXL*DXL/D
+      !dx=1.0
+      dx = 1.0
+      dt=0.4*0.15*DXL*DXL/D
       dttime = dt
 
       do k=1,kml
@@ -355,22 +359,22 @@
 
       ! ----------------------------------------------------------------
 
-      subroutine diffusion_inhomo_comp_range(a,ao,mob,pf,ngx,ngy,ngz,
-     &                                                     timestep, dt)
+      subroutine diffusion_by_flux(a,ao,mob,pf,ngx,ngy,ngz,timestep, dt)
       implicit none
       real(8),intent(inout) :: a(1-ngx:iml+ngx,1-ngy:jml+ngy,
      &                                                    1-ngz:kml+ngz)
       real(8),intent(in) :: ao(1-ngx:iml+ngx,1-ngy:jml+ngy,
      &                                                    1-ngz:kml+ngz)
       real(8),intent(inout) :: mob(1-ngx:iml+ngx,1-ngy:jml+ngy,
-     &                                                   1-ngz:kml+ngz)
+     &                                                    1-ngz:kml+ngz)
       integer(4),intent(in) :: pf(1-ngx:iml+ngx,1-ngy:jml+ngy,
-     &                                                   1-ngz:kml+ngz)
+     &                                                    1-ngz:kml+ngz)
       integer(4),intent(in) :: ngx,ngy,ngz
       integer(4),intent(in) :: timestep
       real(8),intent(in) :: dt
 
       real(8) :: dcdt 
+      real(8) :: lowerlimit, upperlimit
 
       integer(4) :: i,j,k
 
@@ -378,16 +382,34 @@
       do j=1,jml  
       do i=1,iml
         
-        call calc_dcdt(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
+        ! call calc_dcdt(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
+        call calc_dcdt_arithmetic(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
 
         a(i,j,k)=ao(i,j,k) + dcdt*dt
+
+        ! Sanity check for valid concentration value 
+        ! Identify concentration limits based on phase
+        call comp_range_by_phase(pf(i,j,k), lowerlimit, upperlimit)
+        if(a(i,j,k).lt.lowerlimit) then
+          error_flag = .true.
+          write(error_log,*)'Error, diffusion_by_flux(), ',
+     &       'Concentration lower limit reached at (',i,',',j,',',k,')',
+     &          ', phase=',pf(i,j,k), ', ao=',ao(i,j,k),', a=',a(i,j,k),
+     &                                               ', mob=',mob(i,j,k)         
+        else if(a(i,j,k).gt.upperlimit) then
+          error_flag = .true.
+          write(error_log,*)'Error, diffusion_by_flux(), ',
+     &       'Concentration upper limit reached at (',i,',',j,',',k,')',
+     &          ', phase=',pf(i,j,k), ', ao=',ao(i,j,k),', a=',a(i,j,k),
+     &                                               ', mob=',mob(i,j,k)
+        end if
 
       enddo
       enddo
       enddo
 
       return 
-      end subroutine diffusion_inhomo_comp_range
+      end subroutine diffusion_by_flux
 
       ! ----------------------------------------------------------------
 
@@ -489,10 +511,91 @@
 
       ! ----------------------------------------------------------------
 
-      subroutine calc_diffusion_mobility(mob_op,mob,ao,pf,ngx,ngy,ngz,
-     &                                                               dt)
+
+      subroutine calc_dcdt_arithmetic(dcdt, i,j,k, ao, mob, ngx,ngy,ngz)
+      implicit none
+      real(8), intent(inout) :: dcdt
+      integer(4), intent(in) :: i,j,k
+      real(8), intent(in) :: ao(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8), intent(in) :: mob(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: ngx, ngy, ngz
+
+      real(8) :: jxp, jxn 
+      real(8) :: jyp, jyn
+      real(8) :: jzp, jzn
+      real(8) :: div_x, div_y, div_z
+      real(8) :: Meff_xp, Meff_xn 
+      real(8) :: Meff_yp, Meff_yn
+      real(8) :: Meff_zp, Meff_zn
+
+      if(ngx.gt.0) then 
+        Meff_xp=(mob(i+1,j,k)+mob(i,j,k))/2.0
+        Meff_xn=(mob(i,j,k)+mob(i-1,j,k))/2.0
+      else
+        Meff_xp = 0.0d0
+        Meff_xn = 0.0d0
+      end if
+      if(ngy.gt.0) then 
+        Meff_yp=(mob(i,j+1,k)+mob(i,j,k))/2.0
+        Meff_yn=(mob(i,j,k)+mob(i,j-1,k))/2.0
+      else
+        Meff_yp = 0.0d0
+        Meff_yn = 0.0d0
+      end if
+      if(ngz.gt.0) then
+        Meff_zp=(mob(i,j,k+1)+mob(i,j,k))/2.0
+        Meff_zn=(mob(i,j,k)+mob(i,j,k-1))/2.0
+      else
+        Meff_zp = 0.0d0
+        Meff_zn = 0.0d0
+      end if
+
+      ! Fluxes in x direction
+      if(ngx.gt.0) then
+        jxn = - Meff_xn * (ao(i,j,k) - ao(i-1,j,k)) / DXL
+        jxp = - Meff_xp * (ao(i+1,j,k) - ao(i,j,k)) / DXL
+      else
+        jxn = 0.0d0
+        jxp = 0.0d0
+      end if
+
+      ! Fluxes in y direction
+      if(ngy.gt.0) then
+        jyn = - Meff_yn * (ao(i,j,k) - ao(i,j-1,k)) / DYL
+        jyp = - Meff_yp * (ao(i,j+1,k) - ao(i,j,k)) / DYL
+      else
+        jyn = 0.0d0
+        jyp = 0.0d0
+      end if
+
+      ! Fluxes in z direction
+      if(ngz.gt.0) then
+        jzn = - Meff_zn * (ao(i,j,k) - ao(i,j,k-1)) / DZL
+        jzp = - Meff_zp * (ao(i,j,k+1) - ao(i,j,k)) / DZL
+      else
+        jzn = 0.0d0
+        jzp = 0.0d0
+      end if
+
+      div_x = (jxp - jxn) / DXL 
+      div_y = (jyp - jyn) / DYL
+      div_z = (jzp - jzn) / DZL
+
+      dcdt = - (div_x + div_y + div_z) 
+
+      return 
+      end subroutine calc_dcdt_arithmetic
+
+      ! ----------------------------------------------------------------
+
+      subroutine calc_diffusion_mobility(mob_op,flow_factor,mob,ao,pf,
+     &                                                   ngx,ngy,ngz,dt)
       implicit none
       real(8), intent(inout) :: mob_op(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8), intent(inout) :: flow_factor(1-ngx:iml+ngx,1-ngy:jml+ngy,
      &                                                    1-ngz:kml+ngz)
       real(8), intent(in) :: mob(1-ngx:iml+ngx,1-ngy:jml+ngy,
      &                                                    1-ngz:kml+ngz)
@@ -503,37 +606,25 @@
       integer(4), intent(in) :: ngx, ngy, ngz
       real(8), intent(in) :: dt 
 
-      real(8) :: cnew_try, dcdt 
-      real(8) :: lowerlimit, upperlimit
-      real(8) :: delta_c, delta_c_upperlimit, delta_c_lowerlimit
-
       integer(4) :: i,j,k
-      integer(4) :: ig,jg,kg
 
       do k=1,kml
       do j=1,jml
       do i=1,iml
-
-        call calc_dcdt(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
-
-        cnew_try = ao(i,j,k) + dcdt*dt
-
-        delta_c = cnew_try - ao(i,j,k)
-
-        ! Identify concentration limits based on phase
-        call comp_range_by_phase(pf(i,j,k), lowerlimit, upperlimit)
-        delta_c_upperlimit = upperlimit - ao(i,j,k)
-        delta_c_lowerlimit = lowerlimit - ao(i,j,k)
-        ! In case of too much flux coming in - reduce the mobility so that cnew_try < upperlimit
-        if (cnew_try .gt. upperlimit) then
-          mob_op(i,j,k) = 0.0d0
-        ! In case of too much flux going out - reduce the mobility so that cnew_try > lowerlimit
-        ! Make sure the mobility is non-negative value.
-        else if (cnew_try .lt. lowerlimit) then
-          mob_op(i,j,k) = 0.0d0
+    !     call calc_flow_factor(flow_factor,i,j,k,ao,pf,mob,ngx,ngy,ngz,
+    !  &                                                               dt)
+        call calc_flow_factor_arithmetic(flow_factor,i,j,k,ao,pf,mob,
+     &                                                   ngx,ngy,ngz,dt)
+        !mob_op(i,j,k) = flow_factor(i,j,k) * mob(i,j,k)
+        if (pf(i,j,k) .eq. 1) then
+          mob_op(i,j,k) = Mob_p1 * flow_factor(i,j,k)
+        else if( pf(i,j,k) .eq. 2) then
+          mob_op(i,j,k) = Mob_p2 * flow_factor(i,j,k)
+        else if ( pf(i,j,k) .eq. 3) then
+          mob_op(i,j,k) = Mob_p3 * flow_factor(i,j,k)
         else
-          mob_op(i,j,k) = mob(i,j,k)
-        endif
+          mob_op(i,j,k) = flow_factor(i,j,k) * mob(i,j,k)
+        end if
       enddo
       enddo
       enddo
@@ -542,7 +633,133 @@
 
       end subroutine calc_diffusion_mobility
 
+      ! ----------------------------------------------------------------
 
+      subroutine calc_flow_factor(flow_factor,i,j,k,ao,pf,mob,
+     &                                                   ngx,ngy,ngz,dt)
+      implicit none
+      real(8), intent(inout) :: flow_factor(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: i,j,k
+      real(8), intent(in) :: ao(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: pf(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8), intent(in) :: mob(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: ngx, ngy, ngz
+      real(8), intent(in) :: dt
+
+      real(8) :: dcmax_over_dc ! Ratio of max allowable concentration change to predicted concentration change
+      real(8) :: dcdt 
+      real(8) :: cnew_try, delta_c
+      real(8) :: lowerlimit, upperlimit
+      real(8) :: af_xp, af_xn
+      real(8) :: af_yp, af_yn
+      real(8), parameter :: smallnumber = 1.0d-10
+
+      flow_factor(i,j,k) = 1.0d0 ! Initialization with full flow capacity
+
+      ! Calculate dcdt at this grid point
+      call calc_dcdt(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
+
+      cnew_try = ao(i,j,k) + dcdt*dt
+      delta_c = cnew_try - ao(i,j,k)
+      ! Identify concentration limits based on phase
+      call comp_range_by_phase(pf(i,j,k), lowerlimit, upperlimit)
+
+      if(cnew_try <= lowerlimit) then 
+        dcmax_over_dc = (lowerlimit - ao(i,j,k)) / delta_c
+      else if(cnew_try >= upperlimit) then
+        dcmax_over_dc = (upperlimit - ao(i,j,k)) / delta_c
+      else
+        return ! No adjustment needed
+      end if
+
+      af_xn = dcmax_over_dc*mob(i-1,j,k)/
+     &       ((1.0d0-dcmax_over_dc)*mob(i,j,k)+mob(i-1,j,k)+smallnumber)
+      af_xp = dcmax_over_dc*mob(i+1,j,k)/
+     &       ((1.0d0-dcmax_over_dc)*mob(i,j,k)+mob(i+1,j,k)+smallnumber)
+      af_yn = dcmax_over_dc*mob(i,j-1,k)/
+     &       ((1.0d0-dcmax_over_dc)*mob(i,j,k)+mob(i,j-1,k)+smallnumber)
+      af_yp = dcmax_over_dc*mob(i,j+1,k)/
+     &       ((1.0d0-dcmax_over_dc)*mob(i,j,k)+mob(i,j+1,k)+smallnumber)
+
+      flow_factor(i,j,k) = min(af_xn, af_xp, af_yn, af_yp)
+
+      if(flow_factor(i,j,k) .lt. 0.0d0) then 
+        error_flag = .true.
+        write(error_log,*) 
+     &                'Error, calc_flow_factor(): Negative flow factor',
+     &               ' at (', i,',',j,',',k,') pid=', myrank, 
+     &               'pf=', pf(i,j,k),' lowerlimit=', lowerlimit,
+     &               ' upperlimit=', upperlimit,
+     &               ' cnew_try=', cnew_try, ' ao=', ao(i,j,k),
+     &               ' dcdt=', dcdt, ' delta_c=', delta_c,
+     &               ' dcmax_over_dc=', dcmax_over_dc,
+     &               ' af_xn=', af_xn, ' af_xp=', af_xp,
+     &               ' af_yn=', af_yn, ' af_yp=', af_yp
+      end if
+
+
+      return 
+      end subroutine calc_flow_factor
+
+      ! ----------------------------------------------------------------
+
+      subroutine calc_flow_factor_arithmetic(flow_factor,i,j,k,ao,pf,
+     &                                               mob,ngx,ngy,ngz,dt)
+      implicit none
+      real(8), intent(inout) :: flow_factor(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: i,j,k
+      real(8), intent(in) :: ao(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: pf(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      real(8), intent(in) :: mob(1-ngx:iml+ngx,1-ngy:jml+ngy,
+     &                                                    1-ngz:kml+ngz)
+      integer(4), intent(in) :: ngx, ngy, ngz
+      real(8), intent(in) :: dt
+
+      real(8) :: dcmax ! Ratio of max allowable concentration change to predicted concentration change
+      real(8) :: dcdt 
+      real(8) :: cnew_try, delta_c
+      real(8) :: lowerlimit, upperlimit
+      real(8) :: af_xp, af_xn
+      real(8) :: af_yp, af_yn
+      real(8), parameter :: smallnumber = 1.0d-10
+      real(8) :: denominator
+
+      flow_factor(i,j,k) = 1.0d0 ! Initialization with full flow capacity
+
+      ! Calculate dcdt at this grid point
+      call calc_dcdt_arithmetic(dcdt, i,j,k, ao, mob, ngx, ngy, ngz)
+
+      cnew_try = ao(i,j,k) + dcdt*dt
+      ! Identify concentration limits based on phase
+      call comp_range_by_phase(pf(i,j,k), lowerlimit, upperlimit)
+
+      if(cnew_try <= lowerlimit) then 
+        dcmax = cnew_try - lowerlimit
+        denominator = 0.5d0*mob(i,j,k)*dt*( smallnumber +
+     &             (ao(i+1,j,k)-2.0d0*ao(i,j,k)+ao(i-1,j,k))/(DXL*DXL)+
+     &             (ao(i,j+1,k)-2.0d0*ao(i,j,k)+ao(i,j-1,k))/(DYL*DYL) )
+        flow_factor(i,j,k) = 1.0d0 - dcmax / denominator
+      else if(cnew_try >= upperlimit) then
+        dcmax = cnew_try - upperlimit
+        denominator = 0.5d0*mob(i,j,k)*dt*( smallnumber +
+     &             (ao(i+1,j,k)-2.0d0*ao(i,j,k)+ao(i-1,j,k))/(DXL*DXL)+
+     &             (ao(i,j+1,k)-2.0d0*ao(i,j,k)+ao(i,j-1,k))/(DYL*DYL) )
+        flow_factor(i,j,k) = 1.0d0 - dcmax / denominator
+      else
+        return ! No adjustment needed
+      end if
+
+      ! Negative flow_factor allowed here since arithmetic mean is used.
+
+      return 
+      end subroutine calc_flow_factor_arithmetic
 
       ! ----------------------------------------------------------------
 
@@ -559,8 +776,8 @@
         comp_min = 0.0d0
         comp_max = 1.0d0
       case(3)  ! Solid solution with limited solubility
-        comp_min = 0.05d0
-        comp_max = 0.06d0
+        comp_min = 0.20d0
+        comp_max = 0.50d0
       case default 
         write(*,*)'comp_range_by_phase: Unknown phase ID'
         write(*,*)'  phaseid = ', phaseid
